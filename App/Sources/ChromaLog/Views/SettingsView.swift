@@ -88,35 +88,39 @@ struct SettingsView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("YOLO Spot Detector")
-                    .font(.system(size: 11, weight: .semibold))
-
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(yoloDotColor)
-                        .frame(width: 8, height: 8)
-                    Text(yoloStatusLabel)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-
-                Button {
-                    store.startYoloTraining()
-                } label: {
-                    if store.yoloStatus == "training" {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Training… (~5 min)")
+            GroupBox("YOLO Spot Detector") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(yoloDotColor)
+                            .frame(width: 8, height: 8)
+                        Text(yoloStatusLabel)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        if let dateStr = yoloTrainedAtFormatted {
+                            Text("(trained \(dateStr))")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
                         }
-                    } else {
-                        Text("Re-train YOLO (YOLOv8n)")
                     }
-                }
-                .disabled(store.yoloStatus == "training")
 
-                Text("Trains on synthetic TLC data locally. Requires: pip install ultralytics")
-                    .font(.system(size: 9)).foregroundStyle(.tertiary)
+                    Button {
+                        store.startYoloTraining()
+                    } label: {
+                        if store.yoloStatus == "training" {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Training… (~5 min)")
+                            }
+                        } else {
+                            Text("Re-train YOLO (YOLOv8n)")
+                        }
+                    }
+                    .disabled(store.yoloStatus == "training")
+
+                    Text("Trains on synthetic TLC data locally. Requires: pip install ultralytics")
+                        .font(.system(size: 9)).foregroundStyle(.tertiary)
+                }
             }
 
             HStack {
@@ -145,6 +149,23 @@ struct SettingsView: View {
             }
             store.refreshYoloStatus()
         }
+    }
+
+    /// Parses `store.yoloTrainedAt` (ISO 8601) and returns a `yyyy-MM-dd` string, or nil.
+    private var yoloTrainedAtFormatted: String? {
+        guard let raw = store.yoloTrainedAt else { return nil }
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var date = isoFormatter.date(from: raw)
+        if date == nil {
+            // Fallback without fractional seconds.
+            isoFormatter.formatOptions = [.withInternetDateTime]
+            date = isoFormatter.date(from: raw)
+        }
+        guard let d = date else { return nil }
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        return df.string(from: d)
     }
 
     private var yoloDotColor: Color {

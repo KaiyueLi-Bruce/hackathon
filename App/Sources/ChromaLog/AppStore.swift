@@ -134,7 +134,10 @@ final class AppStore: ObservableObject {
 
     // YOLO spot detector
     @Published var yoloStatus: String = "not_trained"   // not_trained | training | ready
+    @Published var yoloTrainedAt: String? = nil          // ISO 8601 string from server
     var useYolo: Bool { yoloStatus == "ready" }
+
+    private var yoloPollingTask: Task<Void, Never>?
 
     // AI report (M3, spec §10)
     @Published var notebookText: String = ""        // optional lab notebook
@@ -875,7 +878,9 @@ final class AppStore: ObservableObject {
     // MARK: - YOLO model management
 
     func startYoloTraining() {
-        Task { @MainActor in
+        // Cancel any prior polling task before starting a new one.
+        yoloPollingTask?.cancel()
+        yoloPollingTask = Task { @MainActor in
             do {
                 guard await CVClient.shared.waitForReady(timeout: 5) else {
                     yoloStatus = "not_trained"; return
@@ -889,22 +894,36 @@ final class AppStore: ObservableObject {
         }
     }
 
+    /// Poll until the server reports non-training, or until 72 iterations (~6 min) elapsed.
     private func pollYoloStatus() async {
-        while yoloStatus == "training" {
+        let maxPolls = 72
+        var polls = 0
+        while yoloStatus == "training" && polls < maxPolls {
             do {
                 try await Task.sleep(nanoseconds: 5_000_000_000)
+                polls += 1
                 let info = try await CVClient.shared.yoloModelStatus()
-                await MainActor.run { self.yoloStatus = info.status }
+                await MainActor.run {
+                    self.yoloStatus = info.status
+                    self.yoloTrainedAt = info.trained_at
+                }
             } catch {
                 break
             }
+        }
+        // If we timed out still training, mark as error.
+        if yoloStatus == "training" {
+            yoloStatus = "not_trained"
         }
     }
 
     func refreshYoloStatus() {
         Task {
             guard let info = try? await CVClient.shared.yoloModelStatus() else { return }
-            await MainActor.run { self.yoloStatus = info.status }
+            await MainActor.run {
+                self.yoloStatus = info.status
+                self.yoloTrainedAt = info.trained_at
+            }
         }
     }
 }
