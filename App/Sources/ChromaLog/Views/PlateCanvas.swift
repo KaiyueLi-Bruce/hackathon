@@ -254,9 +254,13 @@ private struct SpotMagnifier: View {
     var body: some View {
         let imgW = image.size.width
         let imgH = image.size.height
-        // Offset scaled image so the spot center lands in the middle of the loupe.
-        let ox = size / 2 - normalizedPoint.x * imgW * zoom
-        let oy = size / 2 - normalizedPoint.y * imgH * zoom
+        // Shift the scaled image so the spot's pixel lands at the loupe center.
+        // The image is centered in the ZStack at (size/2, size/2); its half-extents
+        // are (imgW*zoom/2, imgH*zoom/2). We need to subtract the spot's position
+        // in the scaled image relative to the image center:
+        //   offset = (0.5 - normalizedPoint) * imgDim * zoom
+        let ox = (0.5 - normalizedPoint.x) * imgW * zoom
+        let oy = (0.5 - normalizedPoint.y) * imgH * zoom
 
         ZStack {
             Circle()
