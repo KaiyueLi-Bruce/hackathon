@@ -74,8 +74,6 @@ struct ContentView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            Button { store.showSettings = true } label: { Image(systemName: "gearshape") }
-                .help("Settings (AI / OpenRouter)")
             Button { store.saveCurrentPlate() } label: { Image(systemName: "square.and.arrow.down") }
                 .help("Save plate")
                 .keyboardShortcut("s", modifiers: [.command])
