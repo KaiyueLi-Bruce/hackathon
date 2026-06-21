@@ -1,0 +1,11 @@
+# ChromaLog CV sidecar — 全部平台无关 (Win/macOS/Linux), 纯 CPU
+opencv-python-headless>=4.8
+numpy>=1.24
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+pillow>=10.0
+# 升级项 (M5+, 现在不强制安装):
+#   onnxruntime>=1.17   # 跨平台推理 (板分割 U-Net / sklearn / YOLO)
+#   scikit-learn        # 斑点 patch 增量分类
+#   skl2onnx            # sklearn -> ONNX

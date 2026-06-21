@@ -60,6 +60,14 @@ target/
 .cache/
 coverage/
 
+# ---- Swift / SwiftPM ----
+.build/
+.swiftpm/
+
+# ---- CV debug / test artifacts ----
+_debug/
+_test_out/
+
 # ---- Misc ----
 tmp/
 temp/

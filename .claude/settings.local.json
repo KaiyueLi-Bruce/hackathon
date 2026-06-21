@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'Add ChromaLog project: Swift app, CV pipeline, spec, training images *)",
+      "Bash(git push *)"
+    ]
+  }
+}
