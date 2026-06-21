@@ -5,7 +5,9 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 pillow>=10.0
-# 升级项 (M5+, 现在不强制安装):
-#   onnxruntime>=1.17   # 跨平台推理 (板分割 U-Net / sklearn / YOLO)
-#   scikit-learn        # 斑点 patch 增量分类
-#   skl2onnx            # sklearn -> ONNX
+# 斑点 patch 在线增量分类 (M5+):
+scikit-learn>=1.4
+# 升级项 (未启用):
+#   onnxruntime>=1.17   # 跨平台推理 (板分割 U-Net / YOLO / sklearn->onnx)
+#   skl2onnx            # sklearn -> ONNX 导出
+#   ultralytics torch   # YOLO 训练/推理

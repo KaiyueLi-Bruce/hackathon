@@ -68,6 +68,9 @@ coverage/
 _debug/
 _test_out/
 
+# ---- 学习模型 + 训练样本 (随用户数据增长) ----
+cv/models/
+
 # ---- Misc ----
 tmp/
 temp/

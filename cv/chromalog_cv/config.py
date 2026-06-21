@@ -11,6 +11,12 @@ class Config:
     plate_min_area_frac: float = 0.05  # 候选四边形面积须 >= 整图该比例 (板可能在大背景里占比较小)
     plate_quad_eps_frac: float = 0.02  # approxPolyDP 精度 (相对周长)
     rectify_cv_trust: float = 0.45     # 纯 OpenCV 正畸置信 >= 此值即采信, 不再调 AI (AI 仅补 OpenCV 短板)
+    # ---- 斑点 patch 在线增量分类 (learn.py) ----
+    clf_patch_frac: float = 0.10    # patch 边长相对板短边 (质心为中心的固定窗口)
+    clf_patch_size: int = 24        # patch 统一缩放到该方形像素后提特征
+    spot_clf_thresh: float = 0.5    # P(real) >= 此值保留 (已训练时替代面积拐点)
+    clf_match_frac: float = 0.04    # 候选↔最终斑点 质心距 < 该比例(对角线) 视为同一个
+    clf_easy_neg_ratio: float = 1.0 # 易负(随机背景)样本数 / 正样本数
 
     # ---- ② 光照归一化 ----
     clahe_clip: float = 2.0
