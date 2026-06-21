@@ -7,22 +7,25 @@ struct IconRail: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            ForEach(NavSection.allCases) { section in
-                RailButton(
-                    systemImage: section.systemImage,
-                    help: section.title,
-                    isSelected: store.selectedSection == section
-                ) {
-                    store.selectedSection = section
-                    if section == .plates || section == .search || section == .compounds {
-                        store.openArchive()
-                    }
-                }
+            // Experiments (home) + a single Library button. The old Plates/Compounds/
+            // Search buttons all just opened the archive, so they're collapsed into one.
+            RailButton(systemImage: NavSection.experiments.systemImage,
+                       help: NavSection.experiments.title,
+                       isSelected: store.selectedSection == .experiments) {
+                store.selectedSection = .experiments
+            }
+            RailButton(systemImage: NavSection.plates.systemImage,
+                       help: "Library",
+                       isSelected: store.selectedSection == .plates) {
+                store.selectedSection = .plates
+                store.openArchive()
             }
 
             Spacer()
 
-            RailButton(systemImage: "gearshape", help: "Settings", isSelected: false) { }
+            RailButton(systemImage: "gearshape", help: "Settings", isSelected: false) {
+                store.showSettings = true
+            }
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -64,12 +64,21 @@ struct ContentView: View {
         }
 
         ToolbarItem(placement: .principal) {
-            Text(store.titleBarText)
+            // Click to rename the plate/experiment (auto-named by date otherwise).
+            TextField("Plate name", text: $store.plateTitle)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.center)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
+                .frame(minWidth: 180, maxWidth: 320)
+                .help("Click to rename")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
+            // Mobile phase (solvent system) shown at top-right.
+            Text(store.solventSystem.isEmpty ? "Mobile phase" : store.solventSystem)
+                .font(.system(size: 11))
+                .foregroundStyle(store.solventSystem.isEmpty ? .tertiary : .secondary)
+                .lineLimit(1)
             Button { store.showSettings = true } label: { Image(systemName: "gearshape") }
                 .help("Settings (AI / OpenRouter)")
             Button { store.openArchive() } label: { Image(systemName: "square.grid.2x2") }

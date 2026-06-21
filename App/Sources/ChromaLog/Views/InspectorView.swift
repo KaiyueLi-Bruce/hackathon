@@ -47,9 +47,7 @@ private struct ResultsSection: View {
 
         Card(title: "Rf values") {
             if store.spots.isEmpty {
-                EmptyHint(text: store.isSpotMode
-                          ? "Tap the plate to add spots"
-                          : "Enable Spot, then tap the plate")
+                EmptyHint(text: "Click the plate to add a spot · double-click a spot to delete")
             } else {
                 VStack(spacing: 8) {
                     ForEach(store.rfResults, id: \.spot.id) { result in
@@ -164,14 +162,14 @@ private struct SpotRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill(spot.label.color).frame(width: 9, height: 9)
+            Circle().fill(spot.displayColor).frame(width: 9, height: 9)
 
             Menu {
                 ForEach(SpotLabel.allCases, id: \.self) { label in
                     Button(label.rawValue) { store.setLabel(label, for: spot.id) }
                 }
             } label: {
-                Text(spot.label.rawValue).font(.system(size: 12))
+                Text(spot.displayName).font(.system(size: 12))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -238,7 +236,21 @@ private struct ConditionsSection: View {
     var body: some View {
         Card(title: "Conditions") {
             VStack(alignment: .leading, spacing: 10) {
-                EditableField(label: "Solvent system", placeholder: "EtOAc / hexanes", text: $store.solventSystem)
+                if store.plateCount > 1 {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Interval between plates (min)")
+                            .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                        HStack {
+                            Slider(value: $store.intervalMinutes, in: 1...120, step: 1)
+                                .tint(Palette.accent)
+                            Text("\(Int(store.intervalMinutes)) min")
+                                .font(.tabular(11, weight: .medium))
+                                .frame(width: 52, alignment: .trailing)
+                        }
+                    }
+                    Divider()
+                }
+                EditableField(label: "Mobile phase", placeholder: "EtOAc / hexanes", text: $store.solventSystem)
                 EditableField(label: "Ratio", placeholder: "1:3", text: $store.ratio)
                 EditableField(label: "Stationary phase", placeholder: "Silica gel", text: $store.stationaryPhase)
                 EditableField(label: "Visualization", placeholder: "UV254 / KMnO₄", text: $store.visualization)
@@ -266,26 +278,95 @@ private struct EditableField: View {
 }
 
 private struct AISection: View {
+    @EnvironmentObject private var store: AppStore
+
     var body: some View {
         Card(title: "AI report") {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Generate a structured report from the detected Rf values and conditions.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                // Optional lab notebook
+                HStack(spacing: 6) {
+                    Button {
+                        store.loadNotebook()
+                    } label: {
+                        Label(store.notebookName ?? "Upload notebook (optional)", systemImage: "doc.text")
+                            .font(.system(size: 11)).lineLimit(1)
+                    }
+                    .controlSize(.small)
+                    if store.notebookName != nil {
+                        Button { store.clearNotebook() } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    }
+                }
+
+                Text(store.notebookName != nil
+                     ? "Report will use your notebook + detected Rf data."
+                     : "No notebook → the model will ask a few questions first.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+
+                // Clarifying questions (shown when no notebook and questions fetched)
+                if store.notebookName == nil && !store.reportQuestions.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(store.reportQuestions.enumerated()), id: \.offset) { i, q in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(q).font(.system(size: 11, weight: .medium))
+                                TextField("Answer…", text: answerBinding(i))
+                                    .textFieldStyle(.roundedBorder).font(.system(size: 11))
+                            }
+                        }
+                    }
+                }
+
                 Button {
+                    store.startReport()
                 } label: {
                     HStack {
-                        Image(systemName: "sparkles")
-                        Text("Generate AI report")
+                        if store.isGeneratingReport { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "sparkles") }
+                        Text(buttonTitle)
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
                 .tint(Palette.accent)
-                .disabled(true)
+                .disabled(store.isGeneratingReport || store.spots.isEmpty)
+
+                if let status = store.reportStatus {
+                    Text(status).font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+
+                if let md = store.reportMarkdown {
+                    Divider()
+                    ScrollView {
+                        Text(md)
+                            .font(.system(size: 11))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 280)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(md, forType: .string)
+                        store.reportStatus = "Report copied"
+                    } label: { Label("Copy report", systemImage: "doc.on.doc").font(.system(size: 11)) }
+                    .controlSize(.small)
+                }
             }
         }
+    }
+
+    private var buttonTitle: String {
+        if store.spots.isEmpty { return "Add spots first" }
+        if store.notebookName == nil && store.reportQuestions.isEmpty { return "Generate AI report" }
+        if store.notebookName == nil { return "Generate from answers" }
+        return "Generate AI report"
+    }
+
+    private func answerBinding(_ i: Int) -> Binding<String> {
+        Binding(
+            get: { i < store.reportAnswers.count ? store.reportAnswers[i] : "" },
+            set: { v in if i < store.reportAnswers.count { store.reportAnswers[i] = v } }
+        )
     }
 }
 

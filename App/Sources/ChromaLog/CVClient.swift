@@ -114,6 +114,9 @@ final class CVClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        // AI path makes (slow) OpenRouter calls server-side; give it a long timeout.
+        // OpenCV-only stays snappy.
+        request.timeoutInterval = useAI ? 150 : 30
 
         let boundary = UUID().uuidString
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -179,12 +182,15 @@ final class CVClient {
     }
 
     /// Best-effort online learning from one manual correction. Errors are ignored.
-    func learn(rectified: Data, finalSpots: [CGPoint], autoCandidates: [CGPoint]) async {
+    func learn(rectified: Data, finalSpots: [CGPoint], autoCandidates: [CGPoint],
+               baselineY: Double? = nil, frontY: Double? = nil) async {
         guard let url = URL(string: "\(baseURL)/learn") else { return }
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "final_spots": finalSpots.map { [$0.x, $0.y] },
             "auto_candidates": autoCandidates.map { [$0.x, $0.y] },
         ]
+        if let b = baselineY { payload["baseline_y"] = b }
+        if let f = frontY { payload["front_y"] = f }
         guard let payloadData = try? JSONSerialization.data(withJSONObject: payload) else { return }
         let payloadStr = String(data: payloadData, encoding: .utf8) ?? "{}"
 
@@ -206,6 +212,42 @@ final class CVClient {
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
         _ = try? await session.data(for: request)
+    }
+}
+
+struct CVReportResponse: Decodable {
+    let ok: Bool
+    let questions: [String]?
+    let markdown: String?
+    let error: String?
+}
+
+extension CVClient {
+    /// AI report (spec §10). mode = "questions" | "report".
+    func report(mode: String, payloadJSON: String, model: String, key: String) async throws -> CVReportResponse {
+        var comps = URLComponents(string: "\(baseURL)/report")!
+        comps.queryItems = [URLQueryItem(name: "mode", value: mode),
+                            URLQueryItem(name: "model", value: model)]
+        guard let url = comps.url else { throw CVClientError.invalidResponse }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue(key, forHTTPHeaderField: "X-OpenRouter-Key")
+        let boundary = UUID().uuidString
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"payload\"\r\n\r\n".data(using: .utf8)!)
+        body.append(payloadJSON.data(using: .utf8)!)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+        let (data, resp) = try await session.data(for: request)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code == 404 {
+            throw CVClientError.serverError("Sidecar is outdated (no /report). Quit and relaunch the app.")
+        }
+        guard code == 200 else { throw CVClientError.notRunning }
+        return try JSONDecoder().decode(CVReportResponse.self, from: data)
     }
 }
 

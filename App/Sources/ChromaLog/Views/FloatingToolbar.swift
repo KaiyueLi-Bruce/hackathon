@@ -7,9 +7,7 @@ struct FloatingToolbar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            ToolButton(title: "Import", systemImage: "tray.and.arrow.down") {
-                store.presentImportPanel()
-            }
+            PlateStrip()
             divider
             ToolButton(title: "Rotate L", systemImage: "rotate.left", disabled: !store.hasImage) {
                 store.rotatePlate(clockwise: false)

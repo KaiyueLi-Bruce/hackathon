@@ -62,9 +62,9 @@ struct DigitalPlateView: View {
         let x = plate.minX + CGFloat(spot.point.x) * plate.width
         return ZStack {
             Ellipse()
-                .fill(spot.label.color.opacity(0.85))
+                .fill(spot.displayColor.opacity(0.85))
                 .frame(width: 20, height: 12)
-                .shadow(color: spot.label.color.opacity(0.4), radius: 3)
+                .shadow(color: spot.displayColor.opacity(0.4), radius: 3)
             Text(rf.rfDisplay)
                 .font(.tabular(9, weight: .semibold))
                 .foregroundStyle(.primary)

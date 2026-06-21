@@ -35,8 +35,6 @@ struct CanvasView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 FloatingToolbar()
-                    .padding(.bottom, 14)
-                FilmstripView()
             }
             .padding(.bottom, 12)
             .animation(.spring(response: 0.3, dampingFraction: 0.85), value: store.isSpotMode)
@@ -66,7 +64,7 @@ private struct EmptyCanvas: View {
                 .foregroundStyle(isTargeted ? Palette.accent : Color.secondary.opacity(0.6))
             Text("Drop a TLC plate photo")
                 .font(.system(size: 16, weight: .semibold))
-            Text("or use Import in the toolbar below")
+            Text("or click the + box in the toolbar below")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }

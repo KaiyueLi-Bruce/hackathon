@@ -20,6 +20,16 @@ struct SettingsView: View {
     @State private var customModel: String = ""
     @State private var picked: String = "openai/gpt-4o"
 
+    private let reportPresetModels = [
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3.5-sonnet",
+        "google/gemini-2.0-flash-exp",
+        "Custom…",
+    ]
+    @State private var customReportModel: String = ""
+    @State private var pickedReport: String = "openai/gpt-4o"
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("AI Detection (OpenRouter)")
@@ -51,7 +61,7 @@ struct SettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Vision model").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                Text("Vision model (image recognition)").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                 Picker("", selection: $picked) {
                     ForEach(presetModels, id: \.self) { Text($0).tag($0) }
                 }
@@ -60,12 +70,27 @@ struct SettingsView: View {
                     TextField("provider/model-id", text: $customModel)
                         .textFieldStyle(.roundedBorder)
                 }
+                Text("Tip: use a fast vision model (e.g. gemini-2.0-flash); avoid 'reasoning' models.")
+                    .font(.system(size: 9)).foregroundStyle(.tertiary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Report model (can differ from vision)").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                Picker("", selection: $pickedReport) {
+                    ForEach(reportPresetModels, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden()
+                if pickedReport == "Custom…" {
+                    TextField("provider/model-id", text: $customReportModel)
+                        .textFieldStyle(.roundedBorder)
+                }
             }
 
             HStack {
                 Spacer()
                 Button("Done") {
                     store.openRouterModel = (picked == "Custom…") ? customModel : picked
+                    store.reportModel = (pickedReport == "Custom…") ? customReportModel : pickedReport
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -79,6 +104,11 @@ struct SettingsView: View {
                 picked = store.openRouterModel
             } else {
                 picked = "Custom…"; customModel = store.openRouterModel
+            }
+            if reportPresetModels.contains(store.reportModel) {
+                pickedReport = store.reportModel
+            } else {
+                pickedReport = "Custom…"; customReportModel = store.reportModel
             }
         }
     }

@@ -69,20 +69,52 @@ private struct ArchiveCard: View {
     @State private var hovering = false
 
     private var thumbnail: NSImage? { AppDatabase.shared.loadImage(record.imageFileName) }
+    private var seriesCount: Int { AppDatabase.shared.seriesCount(record.id) }
+
+    /// A narrower "sheet" peeking above the main card to suggest a stack.
+    private func sheet(inset: CGFloat, lift: CGFloat, shade: Double) -> some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color(nsColor: .controlBackgroundColor))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(shade)))
+            .frame(height: 140)
+            .padding(.horizontal, inset)
+            .offset(y: -lift)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.primary.opacity(0.05))
-                if let thumbnail {
-                    Image(nsImage: thumbnail)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            ZStack(alignment: .top) {
+                // Stacked "sheets" peeking above the card when it's a multi-plate series.
+                if seriesCount > 1 {
+                    sheet(inset: 24, lift: 12, shade: 0.10)
+                    sheet(inset: 13, lift: 6, shade: 0.16)
+                }
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
+                    if let thumbnail {
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    }
+                }
+                .frame(height: 140)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08)))
+            }
+            .padding(.top, seriesCount > 1 ? 12 : 0)
+            .overlay(alignment: .bottomTrailing) {
+                if seriesCount > 1 {
+                    Text("\(seriesCount) plates")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Capsule().fill(Palette.accent))
+                        .padding(8)
                 }
             }
-            .frame(height: 140)
             .overlay(alignment: .topTrailing) {
                 if hovering {
                     Button { store.deleteExperiment(record) } label: {

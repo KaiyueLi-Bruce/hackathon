@@ -119,7 +119,7 @@ struct PlateExportView: View {
         let x = plate.minX + CGFloat(spot.point.x) * plate.width
         return ZStack {
             Ellipse()
-                .fill(spot.label.color.opacity(0.85))
+                .fill(spot.displayColor.opacity(0.85))
                 .frame(width: 20, height: 12)
             Text(rf.rfDisplay)
                 .font(.system(size: 9, weight: .semibold).monospacedDigit())

@@ -59,6 +59,10 @@ final class SidecarManager {
         }
         let python = "\(dir)/.venv/bin/python3"
 
+        // Kill any stale sidecar holding port 8765 so the freshly-built code is used
+        // (otherwise an old process keeps answering /health but lacks new endpoints).
+        killStale()
+
         let task = Process()
         task.executableURL = URL(fileURLWithPath: python)
         task.arguments = ["-m", "chromalog_cv.server"]
@@ -96,6 +100,17 @@ final class SidecarManager {
         } catch {
             log("failed to start: \(error)")
         }
+    }
+
+    /// Terminate any previously-running sidecar (e.g. left over from a prior run)
+    /// so the new one can bind port 8765 and serve the current code.
+    private func killStale() {
+        let kill = Process()
+        kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        kill.arguments = ["-f", "chromalog_cv.server"]
+        try? kill.run()
+        kill.waitUntilExit()
+        Thread.sleep(forTimeInterval: 0.4)   // let the port free up
     }
 
     func stop() {
