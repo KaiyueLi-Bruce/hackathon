@@ -23,6 +23,30 @@ struct ExperimentRecord: Codable, Identifiable, FetchableRecord, PersistableReco
     var createdAt: Date
 }
 
+// MARK: - Reaction time-course series (stored as a JSON sidecar "<id>_series.json")
+
+/// A whole time-course (multiple plates) persisted alongside an experiment.
+struct SeriesDoc: Codable {
+    var count: Int
+    var intervalMinutes: Double
+    var plates: [SeriesPlate]
+}
+
+struct SeriesPlate: Codable {
+    var rectFile: String         // displayed/rectified image (coordinate basis)
+    var srcFile: String?         // original photo (for re-detect)
+    var baselineY: Double
+    var frontY: Double
+    var spots: [SeriesSpot]
+}
+
+struct SeriesSpot: Codable {
+    var x: Double
+    var y: Double
+    var label: String
+    var custom: String           // free-text custom label (preserved across save/load)
+}
+
 /// A persisted spot in normalized image coordinates (spec §9).
 struct SpotRecord: Codable, Identifiable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "spot"

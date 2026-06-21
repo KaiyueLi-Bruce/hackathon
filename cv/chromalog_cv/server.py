@@ -7,11 +7,12 @@ SwiftUI 通过本地端口调用 /detect, 引擎本身平台无关 (附录 D.2 /
 from __future__ import annotations
 
 import base64
+import json
 from typing import Optional
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, Query, Header
+from fastapi import FastAPI, File, UploadFile, Query, Header, Form
 from fastapi.responses import JSONResponse
 
 from .config import Config
@@ -20,6 +21,8 @@ from . import rectify as R
 from .rectify import rectify as cv_rectify
 from .enhance import enhance_scan
 from . import llm_detect as L
+from . import report as RPT
+from . import learn as LN
 
 app = FastAPI(title="ChromaLog CV sidecar", version="0.1.0")
 
@@ -103,6 +106,65 @@ def _rectify(img: np.ndarray, cfg: Config, use_ai: bool,
         except Exception as e:
             warns.append(f"AI 找板异常, 用 OpenCV 正畸: {e}")
     return rec_cv, "opencv", warns
+
+
+@app.post("/learn")
+async def learn_endpoint(
+    file: UploadFile = File(...),
+    payload: str = Form(...),
+):
+    """从一次手动矫正在线增量训练斑点分类器 (设计 §3.2)。
+    payload: {"final_spots": [[x,y]...], "auto_candidates": [[x,y]...]} 归一化质心。
+    任何坏输入返回 ok:false, 不抛 500。"""
+    try:
+        img = _decode(await file.read())
+        data = json.loads(payload)
+        final_pts = [(float(p[0]), float(p[1])) for p in data.get("final_spots", [])]
+        auto_pts = [(float(p[0]), float(p[1])) for p in data.get("auto_candidates", [])]
+        baseline_y = data.get("baseline_y")
+        front_y = data.get("front_y")
+        baseline_y = float(baseline_y) if baseline_y is not None else None
+        front_y = float(front_y) if front_y is not None else None
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
+    try:
+        return LN.apply_correction(img, final_pts, auto_pts, Config(),
+                                   baseline_y=baseline_y, front_y=front_y)
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
+
+
+@app.get("/model")
+def model_endpoint():
+    return LN.model_info(LN.CLF_PATH, LN.SAMPLES_PATH)
+
+
+@app.post("/report")
+async def report_endpoint(
+    payload: str = Form(...),
+    mode: str = Query("report", description="questions | report"),
+    model: str = Query(...),
+    x_openrouter_key: str = Header(None),
+):
+    """AI 实验报告 (spec §10)。
+    payload: {"data": {...Rf/条件/时程...}, "notebook": "", "answers": ""}
+    mode=questions -> {questions:[...]}; mode=report -> {markdown:"..."}。"""
+    try:
+        body = json.loads(payload)
+        data = body.get("data", {})
+        notebook = str(body.get("notebook", "") or "")
+        answers = str(body.get("answers", "") or "")
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
+    try:
+        if mode == "questions":
+            return {"ok": True, "questions": RPT.generate_questions(data, x_openrouter_key, model)}
+        return {"ok": True, "markdown": RPT.generate_report(data, notebook, answers,
+                                                            x_openrouter_key, model)}
+    except RPT.LLMError as e:
+        return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
 
 
 @app.post("/detect")
