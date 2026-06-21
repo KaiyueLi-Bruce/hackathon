@@ -52,7 +52,7 @@ class PipelineResult:
 
 def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
                  debug: bool = False, llm_regions=None, engine_used: str = "opencv",
-                 rect=None):
+                 rect=None, use_yolo: bool = False):
     """返回 (PipelineResult, debug_image|None, rectified_image)。
 
     rectified_image 即坐标基准图 (正畸后); app 导入后应显示它, 而非用户原图。
@@ -99,6 +99,14 @@ def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
     sp = S.detect_spots(bin_res.binary, bin_res.gray, bin_res.polarity, bin_res.roi,
                         ln.baseline_y, ln.front_y, float(h * w), cfg,
                         keep_regions=(None if learned else llm_regions), scorer=scorer)
+
+    # YOLO fallback: third layer — only when sklearn found nothing
+    if use_yolo and not sp.spots:
+        from . import yolo as Y
+        yolo_sp = Y.detect_yolo(img, cfg, ln.baseline_y, ln.front_y)
+        if yolo_sp.spots:
+            sp = yolo_sp
+            engine_used = f"{engine_used}+yolo"
 
     spots_json = [{
         "x": round(s.x / w, 5), "y": round(s.y / h, 5),
