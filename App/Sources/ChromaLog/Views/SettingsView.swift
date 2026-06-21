@@ -86,6 +86,39 @@ struct SettingsView: View {
                 }
             }
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("YOLO Spot Detector")
+                    .font(.system(size: 11, weight: .semibold))
+
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(yoloDotColor)
+                        .frame(width: 8, height: 8)
+                    Text(yoloStatusLabel)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+
+                Button {
+                    store.startYoloTraining()
+                } label: {
+                    if store.yoloStatus == "training" {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Training… (~5 min)")
+                        }
+                    } else {
+                        Text("Re-train YOLO (YOLOv8n)")
+                    }
+                }
+                .disabled(store.yoloStatus == "training")
+
+                Text("Trains on synthetic TLC data locally. Requires: pip install ultralytics")
+                    .font(.system(size: 9)).foregroundStyle(.tertiary)
+            }
+
             HStack {
                 Spacer()
                 Button("Done") {
@@ -110,6 +143,23 @@ struct SettingsView: View {
             } else {
                 pickedReport = "Custom…"; customReportModel = store.reportModel
             }
+            store.refreshYoloStatus()
+        }
+    }
+
+    private var yoloDotColor: Color {
+        switch store.yoloStatus {
+        case "ready":    return .green
+        case "training": return .yellow
+        default:         return .gray
+        }
+    }
+
+    private var yoloStatusLabel: String {
+        switch store.yoloStatus {
+        case "ready":    return "Ready"
+        case "training": return "Training…"
+        default:         return "Not trained"
         }
     }
 }

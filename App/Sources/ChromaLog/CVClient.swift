@@ -46,6 +46,11 @@ struct CVModelInfo: Decodable {
     let updated_at: String?
 }
 
+struct YoloModelStatus: Decodable {
+    let status: String      // "not_trained" | "training" | "ready"
+    let trained_at: String?
+}
+
 enum CVClientError: LocalizedError {
     case notRunning
     case invalidResponse
@@ -97,7 +102,8 @@ final class CVClient {
 
     func detect(imageData: Data, debug: Bool = false,
                 hatThreshK: Double? = nil, kneeDeviation: Double? = nil,
-                useAI: Bool = false, orModel: String? = nil, orKey: String? = nil) async throws -> CVDetectResponse {
+                useAI: Bool = false, orModel: String? = nil, orKey: String? = nil,
+                useYolo: Bool = false) async throws -> CVDetectResponse {
         var urlComponents = URLComponents(string: "\(baseURL)/detect")!
         var items: [URLQueryItem] = []
         if debug { items.append(URLQueryItem(name: "debug", value: "true")) }
@@ -106,6 +112,9 @@ final class CVClient {
         if useAI, let m = orModel, orKey != nil {
             items.append(URLQueryItem(name: "use_ai", value: "true"))
             items.append(URLQueryItem(name: "or_model", value: m))
+        }
+        if useYolo {
+            items.append(URLQueryItem(name: "use_yolo", value: "true"))
         }
         if !items.isEmpty { urlComponents.queryItems = items }
         guard let url = urlComponents.url else {
@@ -212,6 +221,29 @@ final class CVClient {
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
         _ = try? await session.data(for: request)
+    }
+}
+
+extension CVClient {
+    /// Trigger background YOLO training on the sidecar.
+    func trainYolo() async throws {
+        guard let url = URL(string: "\(baseURL)/train-yolo") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 10
+        let (_, resp) = try await session.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            throw CVClientError.notRunning
+        }
+    }
+
+    /// Poll the sidecar for YOLO model status.
+    func yoloModelStatus() async throws -> YoloModelStatus {
+        guard let url = URL(string: "\(baseURL)/yolo-model") else {
+            throw CVClientError.invalidResponse
+        }
+        let (data, _) = try await session.data(from: url)
+        return try JSONDecoder().decode(YoloModelStatus.self, from: data)
     }
 }
 

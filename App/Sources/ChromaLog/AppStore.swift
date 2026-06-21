@@ -132,6 +132,10 @@ final class AppStore: ObservableObject {
         didSet { UserDefaults.standard.set(reportModel, forKey: "reportModel") }
     }
 
+    // YOLO spot detector
+    @Published var yoloStatus: String = "not_trained"   // not_trained | training | ready
+    var useYolo: Bool { yoloStatus == "ready" }
+
     // AI report (M3, spec §10)
     @Published var notebookText: String = ""        // optional lab notebook
     @Published var notebookName: String?
@@ -455,6 +459,7 @@ final class AppStore: ObservableObject {
         let ai = useAI
         let model = openRouterModel
         let key = useAI ? KeychainHelper.loadAPIKey() : nil
+        let yolo = useYolo
         Task.detached { [weak self] in
             guard let self else { return }
             do {
@@ -463,7 +468,8 @@ final class AppStore: ObservableObject {
                     return
                 }
                 let result = try await client.detect(imageData: imageData, hatThreshK: k, kneeDeviation: dev,
-                                                     useAI: ai, orModel: model, orKey: key)
+                                                     useAI: ai, orModel: model, orKey: key,
+                                                     useYolo: yolo)
                 await self.applyDetection(result)
             } catch {
                 await self.finishDetection(status: error.localizedDescription)
@@ -864,6 +870,42 @@ final class AppStore: ObservableObject {
 
     @MainActor private func finishReport(status: String) {
         reportStatus = status; isGeneratingReport = false
+    }
+
+    // MARK: - YOLO model management
+
+    func startYoloTraining() {
+        Task { @MainActor in
+            do {
+                guard await CVClient.shared.waitForReady(timeout: 5) else {
+                    yoloStatus = "not_trained"; return
+                }
+                try await CVClient.shared.trainYolo()
+                yoloStatus = "training"
+                await pollYoloStatus()
+            } catch {
+                yoloStatus = "not_trained"
+            }
+        }
+    }
+
+    private func pollYoloStatus() async {
+        while yoloStatus == "training" {
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                let info = try await CVClient.shared.yoloModelStatus()
+                await MainActor.run { self.yoloStatus = info.status }
+            } catch {
+                break
+            }
+        }
+    }
+
+    func refreshYoloStatus() {
+        Task {
+            guard let info = try? await CVClient.shared.yoloModelStatus() else { return }
+            await MainActor.run { self.yoloStatus = info.status }
+        }
     }
 }
 
