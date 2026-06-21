@@ -10,4 +10,4 @@ scikit-learn>=1.4
 # 升级项 (未启用):
 #   onnxruntime>=1.17   # 跨平台推理 (板分割 U-Net / YOLO / sklearn->onnx)
 #   skl2onnx            # sklearn -> ONNX 导出
-#   ultralytics torch   # YOLO 训练/推理
+#   ultralytics>=8.2    # YOLO training only: pip install ultralytics
