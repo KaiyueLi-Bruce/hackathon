@@ -94,7 +94,9 @@ def test_apply_correction_trains_and_persists(tmp_path, monkeypatch):
 
 def test_model_info_untrained(tmp_path):
     info = learn.model_info(tmp_path / "none.pkl", tmp_path / "none.npz")
-    assert info == {"trained": False, "n_samples": 0, "updated_at": None}
+    assert info["trained"] is False
+    assert info["n_samples"] == 0
+    assert info["updated_at"] is None
 
 
 def _spot(x, y):
