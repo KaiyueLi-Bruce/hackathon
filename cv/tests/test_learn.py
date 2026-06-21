@@ -51,3 +51,27 @@ def test_classifier_save_load_roundtrip(tmp_path):
 def test_classifier_load_missing_returns_untrained(tmp_path):
     clf = learn.SpotClassifier.load(tmp_path / "nope.pkl")
     assert clf.is_trained is False and clf.n_samples == 0
+
+
+def test_derive_samples_splits_pos_hardneg_easyneg():
+    cfg = Config()
+    img = np.zeros((200, 200, 3), np.uint8)
+    final_pts = [(0.50, 0.50)]                  # one real spot
+    auto_pts = [(0.505, 0.495),                 # ~matches final -> positive
+                (0.05, 0.05)]                   # corner, user deleted -> hard negative
+    X, y, counts = learn.derive_samples(img, final_pts, auto_pts, cfg)
+    # 1 matched candidate + 0 user-added = 1 positive; 1 hard neg; easy negs = ceil(1*1)=1
+    assert counts["pos"] == 1
+    assert counts["neg"] == 2                   # 1 hard + 1 easy
+    assert X.shape[0] == 3 and X.shape[1] == cfg.clf_patch_size ** 2 + 3
+    assert set(y.tolist()) == {0, 1}
+    assert int((y == 1).sum()) == 1
+
+
+def test_derive_samples_user_added_spot_is_positive():
+    cfg = Config()
+    img = np.zeros((200, 200, 3), np.uint8)
+    final_pts = [(0.5, 0.5)]                     # present in final
+    auto_pts = []                                # but never auto-detected -> user added
+    X, y, counts = learn.derive_samples(img, final_pts, auto_pts, cfg)
+    assert counts["pos"] == 1
