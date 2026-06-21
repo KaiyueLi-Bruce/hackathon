@@ -66,6 +66,7 @@ struct PlateCanvas: View {
                 ForEach(store.spots) { spot in
                     SpotMarker(
                         spot: spot,
+                        image: image,
                         rect: rect,
                         space: space,
                         isSelected: store.selectedSpotID == spot.id,
@@ -171,12 +172,14 @@ private struct ReferenceLine: View {
 private struct SpotMarker: View {
     @EnvironmentObject private var store: AppStore
     let spot: Spot
+    let image: NSImage
     let rect: CGRect
     let space: String
     let isSelected: Bool
     let rf: Double
 
     @State private var showPicker = false
+    @GestureState private var isDragging = false
 
     var body: some View {
         let x = rect.minX + spot.point.x * rect.width
@@ -203,14 +206,23 @@ private struct SpotMarker: View {
                 .offset(y: -16)
                 .fixedSize()
         }
+        .overlay {
+            if isDragging {
+                SpotMagnifier(image: image, normalizedPoint: spot.point)
+                    .offset(y: -90)
+                    .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: .bottom)))
+            }
+        }
+        .animation(.spring(response: 0.18, dampingFraction: 0.75), value: isDragging)
         .contentShape(Circle())
         .position(x: x, y: y)
-        // Double-click a spot to delete it (priority over select/drag).
         .highPriorityGesture(
             TapGesture(count: 2).onEnded { store.deleteSpot(spot.id) }
         )
         .gesture(
             DragGesture(coordinateSpace: .named(space))
+                .updating($isDragging) { _, state, _ in state = true }
                 .onChanged { value in
                     store.selectedSpotID = spot.id
                     store.moveSpot(spot.id, toNormalized: CGPoint(
@@ -219,7 +231,6 @@ private struct SpotMarker: View {
                     ))
                 }
         )
-        // Single click selects the spot and opens the label picker beside it.
         .onTapGesture {
             store.selectedSpotID = spot.id
             showPicker = true
@@ -228,6 +239,51 @@ private struct SpotMarker: View {
             SpotLabelPopover(spotID: spot.id) { showPicker = false }
                 .environmentObject(store)
         }
+    }
+}
+
+// MARK: - Magnifier loupe shown while dragging a spot
+
+private struct SpotMagnifier: View {
+    let image: NSImage
+    let normalizedPoint: CGPoint
+
+    private let size: CGFloat = 88
+    private let zoom: CGFloat = 4.0
+
+    var body: some View {
+        let imgW = image.size.width
+        let imgH = image.size.height
+        // Offset scaled image so the spot center lands in the middle of the loupe.
+        let ox = size / 2 - normalizedPoint.x * imgW * zoom
+        let oy = size / 2 - normalizedPoint.y * imgH * zoom
+
+        ZStack {
+            Circle()
+                .fill(.regularMaterial)
+
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: imgW * zoom, height: imgH * zoom)
+                .offset(x: ox, y: oy)
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+
+            // Crosshair
+            Path { p in
+                p.move(to: CGPoint(x: size / 2 - 10, y: size / 2))
+                p.addLine(to: CGPoint(x: size / 2 + 10, y: size / 2))
+                p.move(to: CGPoint(x: size / 2, y: size / 2 - 10))
+                p.addLine(to: CGPoint(x: size / 2, y: size / 2 + 10))
+            }
+            .stroke(Color.white.opacity(0.85), lineWidth: 1)
+
+            Circle()
+                .stroke(Color.primary.opacity(0.25), lineWidth: 1.5)
+        }
+        .frame(width: size, height: size)
+        .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
     }
 }
 
