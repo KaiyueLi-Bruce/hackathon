@@ -24,6 +24,7 @@ from . import lines as L
 from . import binarize as B
 from . import spots as S
 from . import enhance as E
+from . import learn as LN
 
 
 @dataclass
@@ -43,6 +44,7 @@ class PipelineResult:
     spots: List[Dict[str, Any]]
     warnings: List[str]
     engine_used: str = "opencv"   # opencv | ai+opencv | yolo
+    learned: bool = False         # 本次检测是否用了 sklearn 学习模型
 
     def to_json(self) -> Dict[str, Any]:
         return asdict(self)
@@ -83,10 +85,19 @@ def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
     if bin_res.uncertain:
         warnings.append("极性不确定 (明暗斑响应接近), 建议用户确认显色方式")
 
-    # ⑤ 斑点候选 (形状无关) + ⑥ 泳道; 有 AI 粗框则用其精修
+    # ⑤ 斑点候选 (形状无关) + ⑥ 泳道。优先级: 学习模型 > AI 粗框 > 面积拐点。
+    clf = LN.SpotClassifier.load()
+    scorer = None
+    learned = False
+    if clf.is_trained:
+        def scorer(s):  # noqa: E306 - 闭包打分器 (img=正畸BGR, 与候选同坐标系)
+            f = LN.patch_features(img, s.x, s.y, cfg)
+            return float(clf.proba(f[None, :])[0])
+        learned = True
+        engine_used = f"{engine_used}+skl"
     sp = S.detect_spots(bin_res.binary, bin_res.gray, bin_res.polarity, bin_res.roi,
                         ln.baseline_y, ln.front_y, float(h * w), cfg,
-                        keep_regions=llm_regions)
+                        keep_regions=(None if learned else llm_regions), scorer=scorer)
 
     spots_json = [{
         "x": round(s.x / w, 5), "y": round(s.y / h, 5),
@@ -105,7 +116,7 @@ def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
         front_y_norm=(round(ln.front_y / h, 5) if ln.front_y is not None else None),
         baseline_from=ln.baseline_from, front_from=ln.front_from,
         n_lanes=len(sp.lane_bounds), spots=spots_json, warnings=warnings,
-        engine_used=engine_used,
+        engine_used=engine_used, learned=learned,
     )
 
     # 显示用图: 在几何正畸图上叠加扫描件增强 (检测已在未增强图上完成, 坐标不变)

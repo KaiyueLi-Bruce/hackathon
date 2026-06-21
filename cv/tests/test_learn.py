@@ -116,3 +116,22 @@ def test_detect_spots_scorer_filters_below_threshold(monkeypatch):
     xs = sorted(round(s.x) for s in res.spots)
     assert all(x < 50 for x in xs)               # only the high-scored blob survives
     assert len(res.spots) == 1
+
+
+from chromalog_cv.pipeline import run_pipeline
+
+
+def test_pipeline_reports_learned_false_when_untrained(tmp_path, monkeypatch):
+    monkeypatch.setattr(learn, "CLF_PATH", tmp_path / "absent.pkl")
+    img = cv2_imread_real2()
+    result, _, _ = run_pipeline(img)
+    assert result.learned is False
+    assert "skl" not in (result.engine_used or "")
+
+
+def cv2_imread_real2():
+    import cv2, os
+    p = os.path.join(os.path.dirname(__file__), "..", "..", "training_pictures", "TLC_real_2.jpg")
+    img = cv2.imread(p)
+    assert img is not None, p
+    return img
