@@ -1,4 +1,4 @@
-# ChromaLog
+# Auto Chem
 
 A macOS app for TLC (Thin-Layer Chromatography) plate analysis. Drop in a photo, get Rf values, AI interpretation, and a searchable experiment archive — automatically.
 
