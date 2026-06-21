@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
+import sys
 from typing import Optional
+from pathlib import Path as _Path
 
 import cv2
 import numpy as np
@@ -25,6 +28,12 @@ from . import report as RPT
 from . import learn as LN
 
 app = FastAPI(title="ChromaLog CV sidecar", version="0.1.0")
+
+# YOLO model paths and constants
+_CV_ROOT    = _Path(__file__).resolve().parent.parent   # cv/
+_YOLO_ONNX  = _CV_ROOT / "models" / "yolo_spot.onnx"
+_YOLO_LOCK  = _CV_ROOT / "models" / ".yolo_training"
+_TRAIN_SCRIPT = _CV_ROOT / "train_yolo.py"
 
 
 @app.get("/health")
@@ -185,6 +194,7 @@ async def detect(
     spot_max_area_frac: Optional[float] = Query(None, description="单斑面积上限(相对板面积)"),
     spot_min_area_frac: Optional[float] = Query(None, description="单斑面积下限(去噪点)"),
     line_min_len_frac: Optional[float] = Query(None, description="基线/前沿线长须>板宽该比例"),
+    use_yolo: bool = Query(False, description="启用 YOLO 第三层 fallback (需已训练 yolo_spot.onnx)"),
 ):
     try:
         img = _decode(await file.read())
@@ -216,7 +226,7 @@ async def detect(
 
     result, dbg, rect_img = run_pipeline(img, cfg, debug=debug,
                                          llm_regions=llm_regions, engine_used=engine,
-                                         rect=rec)
+                                         rect=rec, use_yolo=use_yolo)
     result.warnings = extra_warn + result.warnings
     payload = result.to_json()
     # 正畸后的图 (坐标基准): app 导入后显示它, 不显示原图
@@ -228,6 +238,33 @@ async def detect(
         if ok:
             payload["debug_png_b64"] = base64.b64encode(enc.tobytes()).decode("ascii")
     return payload
+
+
+@app.post("/train-yolo")
+def train_yolo_endpoint():
+    """Start YOLO training in background. Returns immediately."""
+    if _YOLO_LOCK.exists():
+        return JSONResponse(status_code=200,
+                            content={"ok": False, "error": "already training"})
+    _CV_ROOT.joinpath("models").mkdir(exist_ok=True)
+    skip_synth = (_CV_ROOT / "data" / "synth" / "dataset.yaml").exists()
+    cmd = [sys.executable, str(_TRAIN_SCRIPT)]
+    if skip_synth:
+        cmd.append("--skip-synth")
+    subprocess.Popen(cmd, cwd=str(_CV_ROOT))
+    return {"ok": True, "status": "training_started"}
+
+
+@app.get("/yolo-model")
+def yolo_model_endpoint():
+    """Report YOLO model status."""
+    from datetime import datetime, timezone
+    if _YOLO_LOCK.exists():
+        return {"status": "training", "trained_at": None}
+    if _YOLO_ONNX.exists():
+        ts = datetime.fromtimestamp(_YOLO_ONNX.stat().st_mtime, timezone.utc).isoformat()
+        return {"status": "ready", "trained_at": ts}
+    return {"status": "not_trained", "trained_at": None}
 
 
 if __name__ == "__main__":
