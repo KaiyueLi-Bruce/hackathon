@@ -285,3 +285,25 @@ def test_learning_suppresses_taught_false_positive(tmp_path, monkeypatch):
     assert "skl" in result1.engine_used
     # taught real spots should survive (model keeps positives it was trained on)
     assert len(result1.spots) >= 1
+
+
+def test_endpoints_learn_and_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(learn, "CLF_PATH", tmp_path / "clf.pkl")
+    monkeypatch.setattr(learn, "SAMPLES_PATH", tmp_path / "s.npz")
+    from fastapi.testclient import TestClient
+    from chromalog_cv.server import app
+    import cv2, json
+    client = TestClient(app)
+
+    assert client.get("/model").json()["trained"] is False
+
+    img = np.zeros((200, 200, 3), np.uint8)
+    ok, enc = cv2.imencode(".png", img)
+    payload = json.dumps({"final_spots": [[0.5, 0.5]],
+                          "auto_candidates": [[0.5, 0.5], [0.05, 0.05]]})
+    r = client.post("/learn",
+                    files={"file": ("p.png", enc.tobytes(), "image/png")},
+                    data={"payload": payload})
+    body = r.json()
+    assert body["ok"] is True and body["batch"]["pos"] >= 1
+    assert client.get("/model").json()["trained"] is True

@@ -7,11 +7,12 @@ SwiftUI 通过本地端口调用 /detect, 引擎本身平台无关 (附录 D.2 /
 from __future__ import annotations
 
 import base64
+import json
 from typing import Optional
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, Query, Header
+from fastapi import FastAPI, File, UploadFile, Query, Header, Form
 from fastapi.responses import JSONResponse
 
 from .config import Config
@@ -20,6 +21,7 @@ from . import rectify as R
 from .rectify import rectify as cv_rectify
 from .enhance import enhance_scan
 from . import llm_detect as L
+from . import learn as LN
 
 app = FastAPI(title="ChromaLog CV sidecar", version="0.1.0")
 
@@ -103,6 +105,32 @@ def _rectify(img: np.ndarray, cfg: Config, use_ai: bool,
         except Exception as e:
             warns.append(f"AI 找板异常, 用 OpenCV 正畸: {e}")
     return rec_cv, "opencv", warns
+
+
+@app.post("/learn")
+async def learn_endpoint(
+    file: UploadFile = File(...),
+    payload: str = Form(...),
+):
+    """从一次手动矫正在线增量训练斑点分类器 (设计 §3.2)。
+    payload: {"final_spots": [[x,y]...], "auto_candidates": [[x,y]...]} 归一化质心。
+    任何坏输入返回 ok:false, 不抛 500。"""
+    try:
+        img = _decode(await file.read())
+        data = json.loads(payload)
+        final_pts = [(float(p[0]), float(p[1])) for p in data.get("final_spots", [])]
+        auto_pts = [(float(p[0]), float(p[1])) for p in data.get("auto_candidates", [])]
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
+    try:
+        return LN.apply_correction(img, final_pts, auto_pts, Config())
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
+
+
+@app.get("/model")
+def model_endpoint():
+    return LN.model_info(LN.CLF_PATH, LN.SAMPLES_PATH)
 
 
 @app.post("/detect")
