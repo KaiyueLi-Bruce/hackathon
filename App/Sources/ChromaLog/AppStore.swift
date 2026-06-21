@@ -339,10 +339,10 @@ final class AppStore: ObservableObject {
                     label: .product
                 ))
             }
+            autoCandidates = result.spots.map { CGPoint(x: $0.x, y: $0.y) }
         }
 
         lastEngineUsed = result.engine_used
-        autoCandidates = result.spots.map { CGPoint(x: $0.x, y: $0.y) }
         detectWarnings = result.warnings
         if !result.warnings.isEmpty {
             saveStatus = "Detection completed with \(result.warnings.count) warning(s)"

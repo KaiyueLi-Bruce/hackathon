@@ -77,12 +77,18 @@ private struct DetectionTuningCard: View {
     @EnvironmentObject private var store: AppStore
 
     private var engineLabel: String {
-        switch store.lastEngineUsed {
-        case "ai+opencv": return "Engine: AI + OpenCV"
-        case "yolo":      return "Engine: YOLO"
-        case "opencv":    return "Engine: OpenCV"
-        default:          return store.useAI ? "AI on (run Auto-detect)" : "OpenCV (offline)"
+        guard let raw = store.lastEngineUsed else {
+            return store.useAI ? "AI on (run Auto-detect)" : "OpenCV (offline)"
         }
+        let learned = raw.hasSuffix("+skl")
+        let base = learned ? String(raw.dropLast(4)) : raw
+        let label: String
+        switch base {
+        case "ai+opencv": label = "Engine: AI + OpenCV"
+        case "yolo":      label = "Engine: YOLO"
+        default:          label = "Engine: OpenCV"
+        }
+        return learned ? label + " + Learned" : label
     }
 
     var body: some View {
