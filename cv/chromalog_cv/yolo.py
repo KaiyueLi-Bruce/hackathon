@@ -5,18 +5,10 @@ onnxruntime at inference time and is importable with neither installed.
 """
 from __future__ import annotations
 
-import math
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
-
-try:
-    import yaml as _yaml
-    _YAML_OK = True
-except ImportError:
-    _YAML_OK = False
 
 try:
     import onnxruntime as ort
@@ -57,8 +49,8 @@ def _draw_blob(
 
 
 def generate_synthetic_dataset(
-    real_images_dir: str,
-    out_dir: str,
+    real_images_dir: str | Path,
+    out_dir: str | Path,
     n: int = 2000,
     seed: int = 42,
 ) -> None:
