@@ -77,19 +77,32 @@ def _decode(buf: bytes) -> np.ndarray:
 
 def _rectify(img: np.ndarray, cfg: Config, use_ai: bool,
              or_model: Optional[str], key: Optional[str]):
-    """统一正畸入口: AI 找板(粗) + OpenCV 精修四角; 失败/未启用回退纯 OpenCV。
-    返回 (RectifyResult, engine_used, warnings)。AI 失败绝不报错, 只降级。"""
+    """统一正畸入口: OpenCV 优先, AI 仅在 OpenCV 失败/低置信时介入纠偏。
+    返回 (RectifyResult, engine_used, warnings)。AI 失败绝不报错, 只降级。
+
+    设计意义 (见与 detect_regions 同款的"AI 补 OpenCV 短板"哲学):
+      纯 OpenCV 对"板坐落在大片均匀背景上 + 透视"这类图已能可靠拉正; AI 预裁切反而会
+      破坏 OpenCV 找板所依赖的全图背景上下文, 把流程逼入更差的降级分支 (TLC_real_2 即此)。
+      故先跑 OpenCV, 够可信就采信; 仅当其失败/低置信 (背景杂乱/板非最大均匀区) 才请 AI 定位纠偏。"""
     warns = []
+    # ① 先跑纯 OpenCV (便宜, 且对干净背景的图已足够好)
+    rec_cv = cv_rectify(img, cfg)
+    if rec_cv.rectified and rec_cv.confidence >= cfg.rectify_cv_trust:
+        return rec_cv, "opencv", warns
+
+    # ② OpenCV 失败/低置信 -> 让 AI 找板纠偏 (AI 粗定位 + OpenCV 在该区域内精修四角)
     if use_ai and key and or_model:
         try:
             bbox, quad = L.detect_plate(img, key, or_model)
-            rec = R.rectify_ai(img, cfg, bbox=bbox, quad=quad)
-            return rec, "ai+opencv", warns
+            rec_ai = R.rectify_ai(img, cfg, bbox=bbox, quad=quad)
+            if rec_ai.rectified:
+                return rec_ai, "ai+opencv", warns
+            warns.append("AI 正畸亦未成功, 用 OpenCV 结果")
         except L.LLMError as e:
-            warns.append(f"AI 找板不可用, 回退 OpenCV 正畸: {e}")
+            warns.append(f"AI 找板不可用, 用 OpenCV 正畸: {e}")
         except Exception as e:
-            warns.append(f"AI 找板异常, 回退 OpenCV 正畸: {e}")
-    return cv_rectify(img, cfg), "opencv", warns
+            warns.append(f"AI 找板异常, 用 OpenCV 正畸: {e}")
+    return rec_cv, "opencv", warns
 
 
 @app.post("/detect")

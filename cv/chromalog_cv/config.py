@@ -10,6 +10,7 @@ class Config:
     work_max_side: int = 1400          # 处理前把长边缩到该值以内 (加速; 结果坐标归一化, 不受影响)
     plate_min_area_frac: float = 0.05  # 候选四边形面积须 >= 整图该比例 (板可能在大背景里占比较小)
     plate_quad_eps_frac: float = 0.02  # approxPolyDP 精度 (相对周长)
+    rectify_cv_trust: float = 0.45     # 纯 OpenCV 正畸置信 >= 此值即采信, 不再调 AI (AI 仅补 OpenCV 短板)
 
     # ---- ② 光照归一化 ----
     clahe_clip: float = 2.0

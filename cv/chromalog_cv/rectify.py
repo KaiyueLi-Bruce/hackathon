@@ -156,17 +156,24 @@ def _quads_from_mask(mask: np.ndarray, img_area: float, cfg: Config):
     return out
 
 
-def find_best_quad(small: np.ndarray, img_area: float, cfg: Config):
+def find_best_quad(small: np.ndarray, img_area: float, cfg: Config,
+                   full_frame_ok: bool = False):
     """综合多种掩膜(边缘/Otsu/角落背景色)找最佳板四边形。
-    选规则: 足够矩形(rectangularity>=0.8) 中取面积最大者。返回 (quad|None, conf)。"""
+    选规则: 足够矩形(rectangularity>=0.8) 中取面积最大者。返回 (quad|None, conf)。
+
+    full_frame_ok: 在"已裁好的 AI 区域"内调用时置 True —— 此时板本就该近满幅,
+    "整张图边框"的面积上限会误拒正确答案 (见 rectify_ai step ①), 故放开上限。"""
     cands = []
     for mask in (plate_mask_opencv(small, cfg),
                  plate_mask_otsu(small, cfg),
                  plate_mask_bgcolor(small, cfg)):
         cands += _quads_from_mask(mask, img_area, cfg)
     # 阈值放宽到 0.62: 透视成梯形的板 rectangularity 会偏低(~0.7), 不能因此被拒,
-    # 否则只会退回旋转矩形(去旋转不纠透视)。同时排除"整张图边框"那种近满幅四边形(<=0.95)。
-    rect_ok = [c for c in cands if c[2] >= 0.62 and c[1] <= 0.95 * img_area]
+    # 否则只会退回旋转矩形(去旋转不纠透视)。
+    # 面积上限: 全图场景排除"整张图边框"那种近满幅四边形(<=0.95); 但在 AI 裁好的 crop 内,
+    # 板本就近满幅, 此上限会误拒正确答案 -> full_frame_ok 时放开 (仍排除恰好满幅的退化框)。
+    max_frac = 0.999 if full_frame_ok else 0.95
+    rect_ok = [c for c in cands if c[2] >= 0.62 and c[1] <= max_frac * img_area]
     if not rect_ok:
         return None, 0.0
     quad, area, rectangularity = max(rect_ok, key=lambda c: c[1])
@@ -298,7 +305,7 @@ def rectify_ai(bgr: np.ndarray, cfg: Config, bbox=None, quad=None,
         sc = min(1.0, cfg.work_max_side / float(max(crop.shape[:2])))
         small = cv2.resize(crop, None, fx=sc, fy=sc) if sc < 1.0 else crop
         area = small.shape[0] * small.shape[1]
-        quad_s, conf = find_best_quad(small, area, cfg)
+        quad_s, conf = find_best_quad(small, area, cfg, full_frame_ok=True)
         if quad_s is not None and conf >= 0.45:
             q = quad_s / sc
             q[:, 0] += x0
