@@ -1,6 +1,7 @@
 import numpy as np
 from chromalog_cv.config import Config
 from chromalog_cv import learn
+from chromalog_cv import spots as S
 
 
 def test_patch_features_fixed_length_and_scale_invariant():
@@ -94,3 +95,24 @@ def test_apply_correction_trains_and_persists(tmp_path, monkeypatch):
 def test_model_info_untrained(tmp_path):
     info = learn.model_info(tmp_path / "none.pkl", tmp_path / "none.npz")
     assert info == {"trained": False, "n_samples": 0, "updated_at": None}
+
+
+def _spot(x, y):
+    return S.Spot(x=x, y=y, bbox=(int(x) - 2, int(y) - 2, 4, 4), area=16, lane=0, rf=None)
+
+
+def test_detect_spots_scorer_filters_below_threshold(monkeypatch):
+    cfg = Config()
+    binary = np.zeros((100, 100), np.uint8)
+    # two blobs: one will score high, one low
+    cv = __import__("cv2")
+    cv.circle(binary, (30, 50), 3, 255, -1)
+    cv.circle(binary, (70, 50), 3, 255, -1)
+    gray = np.zeros((100, 100), np.uint8)
+    roi = (0, 0, 100, 100)
+    scorer = lambda s: 0.9 if s.x < 50 else 0.1   # keep left, drop right
+    res = S.detect_spots(binary, gray, "dark_on_light", roi, None, None,
+                         float(100 * 100), cfg, scorer=scorer)
+    xs = sorted(round(s.x) for s in res.spots)
+    assert all(x < 50 for x in xs)               # only the high-scored blob survives
+    assert len(res.spots) == 1
