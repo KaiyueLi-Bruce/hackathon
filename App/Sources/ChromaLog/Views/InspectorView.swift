@@ -31,6 +31,7 @@ struct InspectorView: View {
             }
         }
         .background(.ultraThinMaterial)
+        .onAppear { store.refreshModelInfo() }
     }
 }
 
@@ -97,6 +98,11 @@ private struct DetectionTuningCard: View {
                     Spacer()
                     Button("Settings") { store.showSettings = true }
                         .controlSize(.mini)
+                }
+                if store.modelTrainedCount > 0 {
+                    Text("Learned from \(store.modelTrainedCount) corrections")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
                 TuneSlider(title: "Sensitivity",
                            caption: "Threshold k · higher = more conservative, fewer spots",
