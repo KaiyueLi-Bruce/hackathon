@@ -74,15 +74,8 @@ struct ContentView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            // Mobile phase (solvent system) shown at top-right.
-            Text(store.solventSystem.isEmpty ? "Mobile phase" : store.solventSystem)
-                .font(.system(size: 11))
-                .foregroundStyle(store.solventSystem.isEmpty ? .tertiary : .secondary)
-                .lineLimit(1)
             Button { store.showSettings = true } label: { Image(systemName: "gearshape") }
                 .help("Settings (AI / OpenRouter)")
-            Button { store.openArchive() } label: { Image(systemName: "square.grid.2x2") }
-                .help("Library")
             Button { store.saveCurrentPlate() } label: { Image(systemName: "square.and.arrow.down") }
                 .help("Save plate")
                 .keyboardShortcut("s", modifiers: [.command])

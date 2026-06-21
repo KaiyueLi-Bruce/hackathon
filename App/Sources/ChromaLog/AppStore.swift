@@ -601,14 +601,12 @@ final class AppStore: ObservableObject {
                 try db.writeFile(data, name: "\(id)_series.json")
             }
 
-            // Archive thumbnail = the FIRST plate's annotated redraw.
+            // Archive thumbnail = the first plate's actual photo.
             let first = plates.first
-            let firstRf = first.map { rfList(for: $0) } ?? rfResults
-            let annotated = PlateExportView.render(
-                title: titleStr, date: Date(),
-                solventSystem: solventSystem, ratio: ratio, rfResults: firstRf)
-            let thumb = annotated ?? (first?.image ?? plateImage!)
+            let thumb = first?.image ?? plateImage!
             let fileName = try db.saveImage(thumb, named: id)
+            // Also save as {id}_rect.png so loadExperiment() fallback finds the real plate.
+            _ = try? db.saveImage(thumb, named: "\(id)_rect")
 
             let firstCal = first?.calibration ?? calibration
             let record = ExperimentRecord(

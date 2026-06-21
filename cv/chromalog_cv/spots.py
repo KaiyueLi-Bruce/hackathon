@@ -178,8 +178,9 @@ def detect_spots(binary: np.ndarray, gray: np.ndarray, polarity: str, roi,
 
     # ⑤b 噪点过滤: 有 LLM 粗框则用 AI 区域精修; 否则面积回归拐点压噪
     if scorer is not None:
-        # 已训练分类器: 打分过滤, 模型为准 (替代面积拐点, 无兜底 —— 设计 §4)
-        spots = [s for s in spots if scorer(s) >= cfg.spot_clf_thresh]
+        # 已训练分类器: 打分过滤. 兜底: 若分类器过于保守导致 0 结果, 回退面积拐点.
+        scored = [s for s in spots if scorer(s) >= cfg.spot_clf_thresh]
+        spots = scored if scored else _area_knee_cut(spots, cfg)
     elif keep_regions is not None:
         filtered = _filter_by_regions(spots, keep_regions, plate_w, plate_h, cfg)
         # 兜底(Plan C): AI 粗框为空/坐标不可靠时与候选零重叠 -> 会清空所有候选。

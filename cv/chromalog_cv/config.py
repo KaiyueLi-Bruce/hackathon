@@ -14,7 +14,7 @@ class Config:
     # ---- 斑点 patch 在线增量分类 (learn.py) ----
     clf_patch_frac: float = 0.10    # patch 边长相对板短边 (质心为中心的固定窗口)
     clf_patch_size: int = 24        # patch 统一缩放到该方形像素后提特征
-    spot_clf_thresh: float = 0.5    # P(real) >= 此值保留 (已训练时替代面积拐点)
+    spot_clf_thresh: float = 0.30   # P(real) >= 此值保留 (已训练时辅助面积拐点)
     clf_match_frac: float = 0.04    # 候选↔最终斑点 质心距 < 该比例(对角线) 视为同一个
     clf_easy_neg_ratio: float = 1.0 # 易负(随机背景)样本数 / 正样本数
 
@@ -31,7 +31,7 @@ class Config:
     # ---- ③ 自动极性二值化 (top-hat/black-hat 斑点检测) ----
     roi_inset_frac: float = 0.05       # 有效区相对板边内缩 (排除板鳞/阴影)
     hat_kernel_frac: float = 0.18      # 形态学 hat 核相对板短边 (须略大于最大斑点, 否则大斑点只剩边缘)
-    hat_thresh_k: float = 4.0          # 阈值 = 均值 + k*标准差 (越大越保守, 尽量少标注)
+    hat_thresh_k: float = 3.0          # 阈值 = 均值 + k*标准差 (越大越保守, 尽量少标注)
     polarity_uncertain_lo: float = 0.40  # Otsu 少数派占比落在 [lo,hi] -> 判"不确定"
     polarity_uncertain_hi: float = 0.60
     morph_frac: float = 0.006          # 形态学清理核相对板高

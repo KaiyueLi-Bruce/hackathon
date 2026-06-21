@@ -3,7 +3,12 @@
     "allow": [
       "Bash(git add *)",
       "Bash(git commit -q -m 'Add ChromaLog project: Swift app, CV pipeline, spec, training images *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(swift build *)",
+      "Bash(curl -s -X POST http://localhost:8765/detect -F file=@/Users/bruceli/Documents/hackathon/training_pictures/TLC_real_2.jpg)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -X POST http://localhost:8765/learn -F file=@/Users/bruceli/Documents/hackathon/training_pictures/TLC_real_2.jpg -F 'payload={\"final_spots\":[],\"auto_candidates\":[],\"baseline_y\":0.82,\"front_y\":0.05}')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('ok:', d.get\\('ok'\\), '| line_batch:', d.get\\('line_batch'\\)\\)\")"
     ]
   }
 }
