@@ -75,3 +75,22 @@ def test_derive_samples_user_added_spot_is_positive():
     auto_pts = []                                # but never auto-detected -> user added
     X, y, counts = learn.derive_samples(img, final_pts, auto_pts, cfg)
     assert counts["pos"] == 1
+
+
+def test_apply_correction_trains_and_persists(tmp_path, monkeypatch):
+    monkeypatch.setattr(learn, "CLF_PATH", tmp_path / "clf.pkl")
+    monkeypatch.setattr(learn, "SAMPLES_PATH", tmp_path / "s.npz")
+    cfg = Config()
+    img = np.zeros((200, 200, 3), np.uint8)
+    out = learn.apply_correction(img, [(0.5, 0.5)], [(0.5, 0.5), (0.05, 0.05)], cfg)
+    assert out["ok"] is True
+    assert out["batch"]["pos"] >= 1 and out["batch"]["neg"] >= 1
+    info = learn.model_info(tmp_path / "clf.pkl", tmp_path / "s.npz")
+    assert info["trained"] is True
+    assert info["n_samples"] == out["trained_total"]
+    assert info["updated_at"] is not None
+
+
+def test_model_info_untrained(tmp_path):
+    info = learn.model_info(tmp_path / "none.pkl", tmp_path / "none.npz")
+    assert info == {"trained": False, "n_samples": 0, "updated_at": None}
