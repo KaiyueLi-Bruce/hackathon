@@ -40,6 +40,12 @@ struct CVRectifyResponse: Decodable {
     let image_b64: String?
 }
 
+struct CVModelInfo: Decodable {
+    let trained: Bool
+    let n_samples: Int
+    let updated_at: String?
+}
+
 enum CVClientError: LocalizedError {
     case notRunning
     case invalidResponse
@@ -161,6 +167,45 @@ final class CVClient {
         guard let http = response as? HTTPURLResponse else { throw CVClientError.notRunning }
         guard http.statusCode == 200 else { throw CVClientError.notRunning }
         return try JSONDecoder().decode(CVRectifyResponse.self, from: data)
+    }
+
+    func modelInfo() async -> CVModelInfo? {
+        guard let url = URL(string: "\(baseURL)/model") else { return nil }
+        do {
+            let (data, resp) = try await session.data(from: url)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return try JSONDecoder().decode(CVModelInfo.self, from: data)
+        } catch { return nil }
+    }
+
+    /// Best-effort online learning from one manual correction. Errors are ignored.
+    func learn(rectified: Data, finalSpots: [CGPoint], autoCandidates: [CGPoint]) async {
+        guard let url = URL(string: "\(baseURL)/learn") else { return }
+        let payload: [String: Any] = [
+            "final_spots": finalSpots.map { [$0.x, $0.y] },
+            "auto_candidates": autoCandidates.map { [$0.x, $0.y] },
+        ]
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        let payloadStr = String(data: payloadData, encoding: .utf8) ?? "{}"
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        let boundary = UUID().uuidString
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        // image part
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"rect.png\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: image/png\r\n\r\n".data(using: .utf8)!)
+        body.append(rectified)
+        body.append("\r\n".data(using: .utf8)!)
+        // payload field
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"payload\"\r\n\r\n".data(using: .utf8)!)
+        body.append(payloadStr.data(using: .utf8)!)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+        _ = try? await session.data(for: request)
     }
 }
 
