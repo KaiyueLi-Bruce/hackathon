@@ -6,6 +6,7 @@ onnxruntime at inference time and is importable with neither installed.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -142,3 +143,95 @@ def generate_synthetic_dataset(
         f"  0: spot\n"
     )
     (out / "dataset.yaml").write_text(yaml_str)
+
+
+# ---------------------------------------------------------------------------
+# ONNX inference
+# ---------------------------------------------------------------------------
+
+def _get_session() -> Optional["ort.InferenceSession"]:
+    global _YOLO_SESSION
+    if _YOLO_SESSION is None and _ORT_AVAILABLE and YOLO_ONNX_PATH.exists():
+        _YOLO_SESSION = ort.InferenceSession(
+            str(YOLO_ONNX_PATH), providers=["CPUExecutionProvider"]
+        )
+    return _YOLO_SESSION
+
+
+def _nms(
+    boxes: np.ndarray, scores: np.ndarray, iou_thr: float = 0.45
+) -> list[int]:
+    """Pure-numpy NMS. boxes: [N, 4] as (x1, y1, x2, y2)."""
+    if boxes.shape[0] == 0:
+        return []
+    order = scores.argsort()[::-1]
+    keep: list[int] = []
+    while order.size:
+        i = int(order[0])
+        keep.append(i)
+        if order.size == 1:
+            break
+        rest = order[1:]
+        xx1 = np.maximum(boxes[i, 0], boxes[rest, 0])
+        yy1 = np.maximum(boxes[i, 1], boxes[rest, 1])
+        xx2 = np.minimum(boxes[i, 2], boxes[rest, 2])
+        yy2 = np.minimum(boxes[i, 3], boxes[rest, 3])
+        inter = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
+        area_i = (boxes[i, 2] - boxes[i, 0]) * (boxes[i, 3] - boxes[i, 1])
+        area_r = (boxes[rest, 2] - boxes[rest, 0]) * (boxes[rest, 3] - boxes[rest, 1])
+        iou = inter / (area_i + area_r - inter + 1e-6)
+        order = rest[iou <= iou_thr]
+    return keep
+
+
+def detect_yolo(
+    img: np.ndarray,
+    cfg: Config,
+    baseline_y: Optional[float] = None,
+    front_y: Optional[float] = None,
+    conf_thr: float = 0.35,
+) -> SpotsResult:
+    """Run YOLOv8n ONNX inference. Returns empty SpotsResult if model absent."""
+    sess = _get_session()
+    if sess is None:
+        return SpotsResult()
+
+    h0, w0 = img.shape[:2]
+    SIZE = 640
+    resized = cv2.resize(img, (SIZE, SIZE))
+    inp = resized.astype(np.float32) / 255.0
+    inp = inp.transpose(2, 0, 1)[np.newaxis]            # [1, 3, 640, 640]
+
+    raw = sess.run(None, {sess.get_inputs()[0].name: inp})[0]  # [1, 5, 8400]
+    pred = raw[0]  # [5, 8400]: rows cx, cy, w, h, conf
+
+    cx_arr, cy_arr, w_arr, h_arr, conf_arr = pred[0], pred[1], pred[2], pred[3], pred[4]
+    mask = conf_arr >= conf_thr
+    if not mask.any():
+        return SpotsResult()
+
+    cx_f = cx_arr[mask] * w0 / SIZE
+    cy_f = cy_arr[mask] * h0 / SIZE
+    w_f  =  w_arr[mask] * w0 / SIZE
+    h_f  =  h_arr[mask] * h0 / SIZE
+    sc   = conf_arr[mask]
+
+    x1 = cx_f - w_f / 2;  x2 = cx_f + w_f / 2
+    y1 = cy_f - h_f / 2;  y2 = cy_f + h_f / 2
+    boxes = np.stack([x1, y1, x2, y2], axis=1)
+    keep  = _nms(boxes, sc)
+
+    spots: list[Spot] = []
+    for i in keep:
+        cx_px = float((x1[i] + x2[i]) / 2)
+        cy_px = float((y1[i] + y2[i]) / 2)
+        bw    = max(1, int(x2[i] - x1[i]))
+        bh    = max(1, int(y2[i] - y1[i]))
+        spots.append(Spot(
+            x=cx_px, y=cy_px,
+            bbox=(int(x1[i]), int(y1[i]), bw, bh),
+            area=bw * bh, lane=0,
+            rf=_rf(cy_px, baseline_y, front_y),
+            shape="blob",
+        ))
+    return SpotsResult(spots=spots, lane_bounds=[])
