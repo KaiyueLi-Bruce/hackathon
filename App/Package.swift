@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "ChromaLog",
+    name: "AutoChem",
     platforms: [
         .macOS(.v14)
     ],
@@ -11,7 +11,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "ChromaLog",
+            name: "AutoChem",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift")
             ],

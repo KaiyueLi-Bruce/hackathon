@@ -6,7 +6,7 @@ A macOS app for TLC (Thin-Layer Chromatography) plate analysis. Drop in a photo,
 
 ## What it does
 
-TLC is a daily routine in organic chemistry labs: develop a plate, hold it under UV, manually measure distances, hand-calculate Rf. ChromaLog automates that process:
+TLC is a daily routine in organic chemistry labs: develop a plate, hold it under UV, manually measure distances, hand-calculate Rf. Auto Chem automates that process:
 
 1. **Import** a TLC plate photo
 2. **Auto-detect** baseline, solvent front, and spots (OpenCV pipeline)
@@ -61,7 +61,7 @@ cd ../App
 swift build   # or open in Xcode and press ▶
 ```
 
-Or open `App/` as a Swift package in Xcode and run the `ChromaLog` target.
+Or open `App/` as a Swift package in Xcode and run the `Auto Chem` target.
 
 ### 5. Add your API key
 

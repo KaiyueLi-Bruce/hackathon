@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 @main
-struct ChromaLogApp: App {
+struct AutoChemApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = AppStore()
 

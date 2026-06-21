@@ -71,7 +71,7 @@ final class AppDatabase {
             let rep = NSBitmapImageRep(data: tiff),
             let png = rep.representation(using: .png, properties: [:])
         else {
-            throw NSError(domain: "ChromaLog", code: 1,
+            throw NSError(domain: "AutoChem", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Could not encode image"])
         }
         let fileName = "\(name).png"
