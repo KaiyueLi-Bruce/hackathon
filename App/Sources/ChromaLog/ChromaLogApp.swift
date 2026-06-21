@@ -11,6 +11,7 @@ struct AutoChemApp: App {
             ContentView()
                 .environmentObject(store)
                 .frame(minWidth: 1000, minHeight: 660)
+                .preferredColorScheme(nil)  // nil = follow macOS system theme
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -31,6 +32,7 @@ struct AutoChemApp: App {
 /// takes focus when launched as a Swift Package executable.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = nil  // follow system dark / light mode
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.global(qos: .background).async {
