@@ -75,3 +75,8 @@ cv/models/
 tmp/
 temp/
 *.tmp
+
+# ---- YOLO training data & model artifacts ----
+cv/data/
+models/*.onnx
+models/.yolo_training
