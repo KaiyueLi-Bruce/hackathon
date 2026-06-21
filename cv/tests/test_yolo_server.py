@@ -1,6 +1,7 @@
 """Tests for YOLO server endpoints."""
 import json
 from pathlib import Path
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from chromalog_cv.server import app, _YOLO_LOCK, _YOLO_ONNX
@@ -93,12 +94,11 @@ def test_train_yolo_endpoint_starts_training():
     if _YOLO_LOCK.exists():
         _YOLO_LOCK.unlink()
 
-    response = client.post("/train-yolo")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ok"] is True
-    assert data["status"] == "training_started"
-
-    # Clean up the lockfile that may have been created
-    if _YOLO_LOCK.exists():
-        _YOLO_LOCK.unlink()
+    with patch("chromalog_cv.server.subprocess.Popen") as mock_popen:
+        response = client.post("/train-yolo")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["status"] == "training_started"
+        # Verify that Popen was called to spawn the training process
+        mock_popen.assert_called_once()
