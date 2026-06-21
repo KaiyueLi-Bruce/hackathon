@@ -86,7 +86,7 @@ def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
         warnings.append("极性不确定 (明暗斑响应接近), 建议用户确认显色方式")
 
     # ⑤ 斑点候选 (形状无关) + ⑥ 泳道。优先级: 学习模型 > AI 粗框 > 面积拐点。
-    clf = LN.SpotClassifier.load()
+    clf = LN.SpotClassifier.load(LN.CLF_PATH)
     scorer = None
     learned = False
     if clf.is_trained:

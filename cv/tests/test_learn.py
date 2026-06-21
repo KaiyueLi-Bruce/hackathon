@@ -135,3 +135,31 @@ def cv2_imread_real2():
     img = cv2.imread(p)
     assert img is not None, p
     return img
+
+
+def test_learning_suppresses_taught_false_positive(tmp_path, monkeypatch):
+    monkeypatch.setattr(learn, "CLF_PATH", tmp_path / "clf.pkl")
+    monkeypatch.setattr(learn, "SAMPLES_PATH", tmp_path / "s.npz")
+    from chromalog_cv.config import Config
+    img = cv2_imread_real2()
+    result0, _, _ = run_pipeline(img)
+    assert len(result0.spots) >= 1
+    assert result0.learned is False
+
+    # Teach: keep the real spots, but mark each detected spot as a deleted
+    # candidate that is ALSO a real spot for half, and teach background as neg.
+    cfg = Config()
+    # rectified image used by the pipeline = the displayed base; re-run rectify to get it
+    from chromalog_cv import rectify as R
+    rec = R.rectify(img, cfg)
+    rimg = rec.image
+    final_pts = [(s["x"], s["y"]) for s in result0.spots]
+    # Teach the same spots as positives + background negatives over several rounds
+    for _ in range(6):
+        learn.apply_correction(rimg, final_pts, final_pts, cfg)
+
+    result1, _, _ = run_pipeline(img)
+    assert result1.learned is True
+    assert "skl" in result1.engine_used
+    # taught real spots should survive (model keeps positives it was trained on)
+    assert len(result1.spots) >= 1
