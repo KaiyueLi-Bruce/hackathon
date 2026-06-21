@@ -64,16 +64,18 @@ struct ContentView: View {
         }
 
         ToolbarItem(placement: .principal) {
-            Text(store.titleBarText)
+            // Click to rename the plate/experiment (auto-named by date otherwise).
+            TextField("Plate name", text: $store.plateTitle)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.center)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
+                .frame(minWidth: 180, maxWidth: 320)
+                .help("Click to rename")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
             Button { store.showSettings = true } label: { Image(systemName: "gearshape") }
                 .help("Settings (AI / OpenRouter)")
-            Button { store.openArchive() } label: { Image(systemName: "square.grid.2x2") }
-                .help("Library")
             Button { store.saveCurrentPlate() } label: { Image(systemName: "square.and.arrow.down") }
                 .help("Save plate")
                 .keyboardShortcut("s", modifiers: [.command])

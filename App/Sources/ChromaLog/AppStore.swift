@@ -24,7 +24,7 @@ enum NavSection: String, CaseIterable, Identifiable {
         switch self {
         case .experiments: return "flask"
         case .plates:      return "rectangle.stack"
-        case .compounds:   return "fingerprint"
+        case .compounds:   return "atom"
         case .search:      return "magnifyingglass"
         }
     }
@@ -37,6 +37,18 @@ enum InspectorTab: String, CaseIterable, Identifiable {
     case ai = "AI"
 
     var id: String { rawValue }
+}
+
+/// One plate in the reaction time course (its image + per-plate annotations).
+struct PlateSnapshot: Identifiable {
+    let id = UUID()
+    var image: NSImage?
+    var sourceImage: NSImage?
+    var spots: [Spot] = []
+    var calibration = Calibration()
+    var autoCandidates: [CGPoint] = []
+    var calibrationUserModified = false
+    var spotsUserModified = false
 }
 
 /// Central observable state for the app shell (M0 scope).
@@ -78,6 +90,20 @@ final class AppStore: ObservableObject {
     @Published var saveStatus: String?
     @Published var isAutoDetecting: Bool = false
     @Published var detectWarnings: [String] = []
+    /// Snapshot of auto-detected spot centroids (before user edits) — training negatives source.
+    @Published var autoCandidates: [CGPoint] = []
+    /// Number of correction samples the engine has learned from (for the inspector status line).
+    @Published var modelTrainedCount: Int = 0
+
+    // Reaction time course: a sequence of plates. The active one is mirrored into
+    // the single-plate @Published fields above (plateImage/spots/calibration/…),
+    // so all existing views keep working; inactive plates live as snapshots here.
+    @Published var plates: [PlateSnapshot] = []
+    @Published var activeIndex: Int = 0
+    /// Minutes between consecutive plates in the time course (shown when >1 plate).
+    @Published var intervalMinutes: Double = 10
+
+    var plateCount: Int { plates.count }
 
     /// Set to true when the user manually drags a reference line after import.
     /// Prevents subsequent auto-detect runs from overwriting the user's calibration.
@@ -100,6 +126,27 @@ final class AppStore: ObservableObject {
         UserDefaults.standard.string(forKey: "orModel") ?? "openai/gpt-4o" {
         didSet { UserDefaults.standard.set(openRouterModel, forKey: "orModel") }
     }
+    /// Report model — can differ from the vision (image-recognition) model.
+    @Published var reportModel: String =
+        UserDefaults.standard.string(forKey: "reportModel") ?? "openai/gpt-4o" {
+        didSet { UserDefaults.standard.set(reportModel, forKey: "reportModel") }
+    }
+
+    // YOLO spot detector
+    @Published var yoloStatus: String = "not_trained"   // not_trained | training | ready
+    @Published var yoloTrainedAt: String? = nil          // ISO 8601 string from server
+    var useYolo: Bool { yoloStatus == "ready" }
+
+    private var yoloPollingTask: Task<Void, Never>?
+
+    // AI report (M3, spec §10)
+    @Published var notebookText: String = ""        // optional lab notebook
+    @Published var notebookName: String?
+    @Published var reportQuestions: [String] = []   // asked when no notebook
+    @Published var reportAnswers: [String] = []     // parallel to reportQuestions
+    @Published var reportMarkdown: String?
+    @Published var isGeneratingReport: Bool = false
+    @Published var reportStatus: String?
     /// Has a key been stored in Keychain?
     var hasOpenRouterKey: Bool { KeychainHelper.hasAPIKey }
 
@@ -110,6 +157,33 @@ final class AppStore: ObservableObject {
 
     var titleBarText: String {
         "\(reactionName) · Plate \(plateIndex) · \(captureChannel)"
+    }
+
+    /// Mobile phase = solvent system; shown top-right. Defaults shown when unset.
+    var mobilePhaseDisplay: String {
+        let s = solventSystem.trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? "default" : s
+    }
+
+    /// Auto plate name when the user left it blank: "实验N · YYYY-MM-DD".
+    private func autoPlateName() -> String {
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+        let today = (try? AppDatabase.shared.allExperiments())?
+            .filter { Calendar.current.isDateInToday($0.createdAt) }.count ?? 0
+        return "实验\(today + 1) · \(df.string(from: Date()))"
+    }
+
+    /// Fill in sensible default conditions for any field the user left blank,
+    /// so saved experiments are always searchable.
+    private func applyDefaultConditions() {
+        func d(_ v: String, _ def: String) -> String {
+            v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? def : v
+        }
+        solventSystem  = d(solventSystem, "EtOAc/Hexanes")
+        ratio          = d(ratio, "1:1")
+        stationaryPhase = d(stationaryPhase, "Silica gel")
+        visualization  = d(visualization, captureChannel)
+        plateType      = d(plateType, "Glass-backed")
     }
 
     var hasImage: Bool { plateImage != nil }
@@ -155,9 +229,14 @@ final class AppStore: ObservableObject {
     // MARK: - Image import
 
     func importImage(_ image: NSImage, title: String? = nil) {
+        // Ensure there is an active plate slot (first import creates the sequence).
+        let firstImport = plates.isEmpty
+        if plates.isEmpty { plates = [PlateSnapshot()]; activeIndex = 0 }
         plateImage = image
         sourceImage = image          // 检测源 = 原图
-        if let title { plateTitle = title }
+        // Auto-name on a brand-new experiment (date + 实验N); user can rename in the title bar.
+        if firstImport { plateTitle = defaultPlateName() }
+        else if let title { plateTitle = title }
         // Reset annotation for the freshly imported plate.
         spots.removeAll()
         selectedSpotID = nil
@@ -166,11 +245,101 @@ final class AppStore: ObservableObject {
         calibrationUserModified = false
         spotsUserModified = false
         showDigitalPlate = false
-        currentExperimentID = nil
-        solventSystem = ""; ratio = ""; stationaryPhase = ""
-        visualization = ""; plateType = ""
+        // Conditions are shared across the time course; only clear on a brand-new run.
+        if plates.count <= 1 {
+            currentExperimentID = nil
+            solventSystem = ""; ratio = ""; stationaryPhase = ""
+            visualization = ""; plateType = ""
+        }
         saveStatus = nil
+        saveActiveDoc()
         rectifyOnImport()   // 导入即正畸: 立即把画布换成正畸后的图
+    }
+
+    // MARK: - Reaction time course (multi-plate)
+
+    /// Persist the live (mirrored) active-plate fields back into `plates[activeIndex]`.
+    private func saveActiveDoc() {
+        guard plates.indices.contains(activeIndex) else { return }
+        plates[activeIndex].image = plateImage
+        plates[activeIndex].sourceImage = sourceImage
+        plates[activeIndex].spots = spots
+        plates[activeIndex].calibration = calibration
+        plates[activeIndex].autoCandidates = autoCandidates
+        plates[activeIndex].calibrationUserModified = calibrationUserModified
+        plates[activeIndex].spotsUserModified = spotsUserModified
+    }
+
+    /// Load `plates[activeIndex]` into the live mirrored fields.
+    private func loadActiveDoc() {
+        guard plates.indices.contains(activeIndex) else { return }
+        let d = plates[activeIndex]
+        plateImage = d.image
+        sourceImage = d.sourceImage
+        spots = d.spots
+        calibration = d.calibration
+        autoCandidates = d.autoCandidates
+        calibrationUserModified = d.calibrationUserModified
+        spotsUserModified = d.spotsUserModified
+        selectedSpotID = nil
+        showDigitalPlate = false
+        plateIndex = activeIndex + 1
+    }
+
+    /// Switch which plate is shown on the canvas.
+    func selectPlate(_ index: Int) {
+        guard plates.indices.contains(index), index != activeIndex else { return }
+        saveActiveDoc()
+        activeIndex = index
+        loadActiveDoc()
+    }
+
+    /// Plus-box: import a brand-new plate appended to the end of the sequence.
+    func addPlateFromPanel() {
+        presentImagePanel { [weak self] image, title in
+            guard let self else { return }
+            self.saveActiveDoc()
+            self.plates.append(PlateSnapshot())
+            self.activeIndex = self.plates.count - 1
+            self.importImage(image, title: title)
+        }
+    }
+
+    /// Click an existing thumbnail: import a new image overwriting that slot.
+    func overwritePlate(_ index: Int) {
+        presentImagePanel { [weak self] image, title in
+            guard let self, self.plates.indices.contains(index) else { return }
+            self.saveActiveDoc()
+            self.activeIndex = index
+            self.importImage(image, title: title)
+        }
+    }
+
+    /// Drag-reorder plates; keeps the same plate active.
+    func movePlate(from: Int, to: Int) {
+        guard plates.indices.contains(from), from != to else { return }
+        saveActiveDoc()
+        let activeID = plates[activeIndex].id
+        let item = plates.remove(at: from)
+        let dest = to > from ? to - 1 : to
+        plates.insert(item, at: max(0, min(dest, plates.count)))
+        activeIndex = plates.firstIndex(where: { $0.id == activeID }) ?? 0
+        plateIndex = activeIndex + 1
+    }
+
+    /// Image to show for thumbnail `i` (live mirror for the active one).
+    func thumbnailImage(_ i: Int) -> NSImage? {
+        i == activeIndex ? plateImage : (plates.indices.contains(i) ? plates[i].image : nil)
+    }
+
+    private func presentImagePanel(_ completion: @escaping (NSImage, String?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .tiff, .heic, .image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) {
+            completion(image, url.deletingPathExtension().lastPathComponent)
+        }
     }
 
     /// Calls the sidecar to rectify the freshly imported image and swaps the
@@ -227,6 +396,14 @@ final class AppStore: ObservableObject {
     func setLabel(_ label: SpotLabel, for id: Spot.ID) {
         guard let index = spots.firstIndex(where: { $0.id == id }) else { return }
         spots[index].label = label
+        spots[index].customLabel = ""        // preset overrides any custom text
+        spotsUserModified = true
+    }
+
+    /// Set a free-text label on a spot (e.g. a compound name not in the presets).
+    func setCustomLabel(_ text: String, for id: Spot.ID) {
+        guard let index = spots.firstIndex(where: { $0.id == id }) else { return }
+        spots[index].customLabel = text.trimmingCharacters(in: .whitespacesAndNewlines)
         spotsUserModified = true
     }
 
@@ -262,6 +439,14 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func refreshModelInfo() {
+        Task { @MainActor in
+            if let info = await CVClient.shared.modelInfo() {
+                self.modelTrainedCount = info.n_samples
+            }
+        }
+    }
+
     // MARK: - Auto-detect (M5)
 
     func runAutoDetect() {
@@ -277,6 +462,7 @@ final class AppStore: ObservableObject {
         let ai = useAI
         let model = openRouterModel
         let key = useAI ? KeychainHelper.loadAPIKey() : nil
+        let yolo = useYolo
         Task.detached { [weak self] in
             guard let self else { return }
             do {
@@ -285,7 +471,8 @@ final class AppStore: ObservableObject {
                     return
                 }
                 let result = try await client.detect(imageData: imageData, hatThreshK: k, kneeDeviation: dev,
-                                                     useAI: ai, orModel: model, orKey: key)
+                                                     useAI: ai, orModel: model, orKey: key,
+                                                     useYolo: yolo)
                 await self.applyDetection(result)
             } catch {
                 await self.finishDetection(status: error.localizedDescription)
@@ -327,6 +514,7 @@ final class AppStore: ObservableObject {
                     label: .product
                 ))
             }
+            autoCandidates = result.spots.map { CGPoint(x: $0.x, y: $0.y) }
         }
 
         lastEngineUsed = result.engine_used
@@ -367,42 +555,70 @@ final class AppStore: ObservableObject {
 
     // MARK: - Persistence (M2)
 
+    /// Auto name: "<yyyy-MM-dd> 实验N" (N = today's saved count + 1).
+    private func defaultPlateName() -> String {
+        let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+        let today = (try? AppDatabase.shared.allExperiments())?
+            .filter { Calendar.current.isDateInToday($0.createdAt) }.count ?? 0
+        return "\(df.string(from: Date())) 实验\(today + 1)"
+    }
+
+    private func rfList(for p: PlateSnapshot) -> [(spot: Spot, rf: Double)] {
+        p.spots.map { ($0, p.calibration.rf(forNormalizedY: $0.point.y)) }
+            .sorted { $0.1 > $1.1 }
+    }
+
     func saveCurrentPlate() {
         guard plateImage != nil else { return }
+        saveActiveDoc()                       // flush live edits into plates[]
         let db = AppDatabase.shared
         let id = currentExperimentID ?? UUID().uuidString
-
-        // Render the annotated digital-plate image for the archive thumbnail.
-        let titleStr = plateTitle.isEmpty ? "Untitled Plate" : plateTitle
-        let annotated = PlateExportView.render(
-            title: titleStr,
-            date: Date(),
-            solventSystem: solventSystem,
-            ratio: ratio,
-            rfResults: rfResults
-        )
-        let thumbnailImage = annotated ?? plateImage!
+        if plateTitle.trimmingCharacters(in: .whitespaces).isEmpty { plateTitle = defaultPlateName() }
+        let titleStr = plateTitle
 
         do {
-            // Save annotated redraw as the primary image (archive thumbnail).
-            let fileName = try db.saveImage(thumbnailImage, named: id)
-
-            // Save original photo separately so it can be restored on open.
-            var originalFileName: String? = nil
-            if let src = sourceImage {
-                originalFileName = try db.saveImage(src, named: "\(id)_src")
+            // Persist every plate of the time course + a JSON sidecar describing the series.
+            var seriesPlates: [SeriesPlate] = []
+            for (i, p) in plates.enumerated() {
+                guard let img = p.image else { continue }
+                let rectName = try db.saveImage(img, named: "\(id)_p\(i)_rect")
+                var srcName: String? = nil
+                if let s = p.sourceImage, s !== p.image {
+                    srcName = try db.saveImage(s, named: "\(id)_p\(i)_src")
+                }
+                let sp = p.spots.map { s in
+                    SeriesSpot(x: Double(s.point.x), y: Double(s.point.y),
+                               label: s.label.rawValue, custom: s.customLabel)
+                }
+                seriesPlates.append(SeriesPlate(
+                    rectFile: rectName, srcFile: srcName,
+                    baselineY: Double(p.calibration.baselineY),
+                    frontY: Double(p.calibration.frontY), spots: sp))
+            }
+            let doc = SeriesDoc(count: seriesPlates.count, intervalMinutes: intervalMinutes,
+                                plates: seriesPlates)
+            if let data = try? JSONEncoder().encode(doc) {
+                try db.writeFile(data, name: "\(id)_series.json")
             }
 
+            // Archive thumbnail = the first plate's actual photo.
+            let first = plates.first
+            let thumb = first?.image ?? plateImage!
+            let fileName = try db.saveImage(thumb, named: id)
+            // Also save as {id}_rect.png so loadExperiment() fallback finds the real plate.
+            _ = try? db.saveImage(thumb, named: "\(id)_rect")
+
+            let firstCal = first?.calibration ?? calibration
             let record = ExperimentRecord(
                 id: id,
                 title: titleStr,
                 reactionName: reactionName,
-                plateIndex: plateIndex,
+                plateIndex: max(1, plates.count),
                 channel: captureChannel,
                 imageFileName: fileName,
-                originalImageFileName: originalFileName,
-                baselineY: Double(calibration.baselineY),
-                frontY: Double(calibration.frontY),
+                originalImageFileName: nil,
+                baselineY: Double(firstCal.baselineY),
+                frontY: Double(firstCal.frontY),
                 solventSystem: solventSystem,
                 ratio: ratio,
                 stationaryPhase: stationaryPhase,
@@ -410,14 +626,30 @@ final class AppStore: ObservableObject {
                 plateType: plateType,
                 createdAt: Date()
             )
-            let spotRecords = spots.map {
+            let spotRecords = (first?.spots ?? spots).map {
                 SpotRecord(id: $0.id.uuidString, experimentId: id,
                            x: Double($0.point.x), y: Double($0.point.y),
                            label: $0.label.rawValue, note: $0.note)
             }
             try db.save(record, spots: spotRecords)
             currentExperimentID = id
-            saveStatus = "Saved \(record.title)"
+            saveStatus = plates.count > 1 ? "Saved series (\(plates.count) plates)" : "Saved \(titleStr)"
+            // Online learning from this correction (best-effort; never blocks saving).
+            if let rectified = plateImage, let rectData = rectified.jpegData() {
+                let finals = spots.map { $0.point }
+                let cands = autoCandidates
+                // 用户改过基线/前沿才把线位置纳入学习
+                let bY = calibrationUserModified ? Double(calibration.baselineY) : nil
+                let fY = calibrationUserModified ? Double(calibration.frontY) : nil
+                Task.detached {
+                    await CVClient.shared.learn(rectified: rectData,
+                                                finalSpots: finals, autoCandidates: cands,
+                                                baselineY: bY, frontY: fY)
+                    if let info = await CVClient.shared.modelInfo() {
+                        await MainActor.run { self.modelTrainedCount = info.n_samples }
+                    }
+                }
+            }
             refreshExperiments()
         } catch {
             saveStatus = "Save failed: \(error.localizedDescription)"
@@ -430,11 +662,21 @@ final class AppStore: ObservableObject {
 
     func loadExperiment(_ record: ExperimentRecord) {
         let db = AppDatabase.shared
-        // Prefer original photo; fall back to the stored thumbnail if absent.
-        let originalFileName = record.originalImageFileName ?? record.imageFileName
-        guard let image = db.loadImage(originalFileName) else { return }
-        plateImage = image
-        sourceImage = image
+        // Restore the whole time course if a series sidecar exists.
+        if let data = db.readFile("\(record.id)_series.json"),
+           let doc = try? JSONDecoder().decode(SeriesDoc.self, from: data),
+           !doc.plates.isEmpty {
+            loadSeries(doc, record: record)
+            return
+        }
+        // Working image = the saved rectified/rotated plate ("<id>_rect"), the coordinate
+        // basis for spots so points line up. Fall back to the redraw thumbnail for old records.
+        let displayed = db.loadImage("\(record.id)_rect.png") ?? db.loadImage(record.imageFileName)
+        guard let displayed else { return }
+        plateImage = displayed
+        // Original (for re-detect); falls back to the displayed image if not stored.
+        sourceImage = (record.originalImageFileName.flatMap { db.loadImage($0) }) ?? displayed
+        autoCandidates = []
         plateTitle = record.title
         reactionName = record.reactionName
         plateIndex = record.plateIndex
@@ -460,6 +702,52 @@ final class AppStore: ObservableObject {
         showDigitalPlate = false
         showArchive = false
         saveStatus = nil
+        // Reset the time-course to this single loaded plate (mirror stays consistent).
+        plates = [PlateSnapshot()]
+        activeIndex = 0
+        saveActiveDoc()
+    }
+
+    /// Restore an entire reaction time course from its JSON sidecar.
+    private func loadSeries(_ doc: SeriesDoc, record: ExperimentRecord) {
+        let db = AppDatabase.shared
+        var snaps: [PlateSnapshot] = []
+        for sp in doc.plates {
+            guard let img = db.loadImage(sp.rectFile) else { continue }
+            var snap = PlateSnapshot()
+            snap.image = img
+            snap.sourceImage = (sp.srcFile.flatMap { db.loadImage($0) }) ?? img
+            snap.calibration = Calibration(baselineY: CGFloat(sp.baselineY),
+                                           frontY: CGFloat(sp.frontY))
+            snap.spots = sp.spots.map {
+                Spot(point: CGPoint(x: $0.x, y: $0.y),
+                     label: SpotLabel(rawValue: $0.label) ?? .product,
+                     customLabel: $0.custom)
+            }
+            snaps.append(snap)
+        }
+        guard !snaps.isEmpty else { return }
+        plates = snaps
+        activeIndex = 0
+        intervalMinutes = doc.intervalMinutes
+        plateTitle = record.title
+        reactionName = record.reactionName
+        captureChannel = record.channel
+        solventSystem = record.solventSystem
+        ratio = record.ratio
+        stationaryPhase = record.stationaryPhase
+        visualization = record.visualization
+        plateType = record.plateType
+        currentExperimentID = record.id
+        selectedSpotID = nil
+        isSpotMode = false
+        calibrationUserModified = false
+        spotsUserModified = false
+        autoCandidates = []
+        showDigitalPlate = false
+        showArchive = false
+        saveStatus = nil
+        loadActiveDoc()        // mirror plates[0] into the live fields
     }
 
     func deleteExperiment(_ record: ExperimentRecord) {
@@ -471,6 +759,170 @@ final class AppStore: ObservableObject {
     func openArchive() {
         refreshExperiments()
         showArchive = true
+    }
+
+    // MARK: - AI report (M3, spec §10)
+
+    private func reportData() -> [String: Any] {
+        let rf = rfResults.map { item -> [String: Any] in
+            var entry: [String: Any] = ["label": item.spot.displayName]
+            if item.rf.isFinite { entry["rf"] = (item.rf * 1000).rounded() / 1000 }
+            return entry
+        }
+        return [
+            "reaction": reactionName,
+            "channel": captureChannel,
+            "plate_count": plateCount,
+            "interval_minutes": Int(intervalMinutes),
+            "conditions": [
+                "solvent_system": solventSystem, "ratio": ratio,
+                "stationary_phase": stationaryPhase, "visualization": visualization,
+                "plate_type": plateType,
+            ],
+            "rf_table": rf,
+        ]
+    }
+
+    private func reportPayloadJSON(answers: String) -> String? {
+        let body: [String: Any] = ["data": reportData(), "notebook": notebookText, "answers": answers]
+        guard let d = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+
+    /// Load an optional lab notebook (.txt / .md). Supersedes the Q&A path.
+    func loadNotebook() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.plainText, .text]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url,
+           let s = try? String(contentsOf: url, encoding: .utf8) {
+            notebookText = s
+            notebookName = url.lastPathComponent
+            reportQuestions = []; reportAnswers = []
+        }
+    }
+
+    func clearNotebook() { notebookText = ""; notebookName = nil }
+
+    /// Entry point for the "Generate report" button.
+    func startReport() {
+        guard hasOpenRouterKey else {
+            reportStatus = "Set an OpenRouter key in Settings first"; showSettings = true; return
+        }
+        if !notebookText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            runGenerateReport(answers: "")                 // have notebook → generate
+        } else if reportQuestions.isEmpty {
+            requestReportQuestions()                        // no notebook → ask first
+        } else {
+            let combined = zip(reportQuestions, reportAnswers)
+                .map { "Q: \($0)\nA: \($1)" }.joined(separator: "\n")
+            runGenerateReport(answers: combined)            // generate from answers
+        }
+    }
+
+    private func requestReportQuestions() {
+        guard let key = KeychainHelper.loadAPIKey(), let payload = reportPayloadJSON(answers: "") else { return }
+        isGeneratingReport = true; reportStatus = "Asking clarifying questions…"
+        let model = reportModel
+        Task.detached { [weak self] in
+            guard let self else { return }
+            guard await CVClient.shared.waitForReady(timeout: 10) else {
+                await self.finishReport(status: "CV engine not running"); return
+            }
+            do {
+                let r = try await CVClient.shared.report(mode: "questions", payloadJSON: payload, model: model, key: key)
+                await MainActor.run {
+                    if r.ok, let qs = r.questions, !qs.isEmpty {
+                        self.reportQuestions = qs
+                        self.reportAnswers = Array(repeating: "", count: qs.count)
+                        self.reportStatus = "Answer the questions, then Generate"
+                    } else {
+                        self.reportStatus = r.error ?? "No questions returned"
+                    }
+                    self.isGeneratingReport = false
+                }
+            } catch { await self.finishReport(status: error.localizedDescription) }
+        }
+    }
+
+    private func runGenerateReport(answers: String) {
+        guard let key = KeychainHelper.loadAPIKey(), let payload = reportPayloadJSON(answers: answers) else { return }
+        isGeneratingReport = true; reportStatus = "Generating report…"
+        let model = reportModel
+        Task.detached { [weak self] in
+            guard let self else { return }
+            guard await CVClient.shared.waitForReady(timeout: 10) else {
+                await self.finishReport(status: "CV engine not running"); return
+            }
+            do {
+                let r = try await CVClient.shared.report(mode: "report", payloadJSON: payload, model: model, key: key)
+                await MainActor.run {
+                    if r.ok, let md = r.markdown {
+                        self.reportMarkdown = md; self.reportStatus = nil
+                    } else {
+                        self.reportStatus = r.error ?? "Report failed"
+                    }
+                    self.isGeneratingReport = false
+                }
+            } catch { await self.finishReport(status: error.localizedDescription) }
+        }
+    }
+
+    @MainActor private func finishReport(status: String) {
+        reportStatus = status; isGeneratingReport = false
+    }
+
+    // MARK: - YOLO model management
+
+    func startYoloTraining() {
+        // Cancel any prior polling task before starting a new one.
+        yoloPollingTask?.cancel()
+        yoloPollingTask = Task { @MainActor in
+            do {
+                guard await CVClient.shared.waitForReady(timeout: 5) else {
+                    yoloStatus = "not_trained"; return
+                }
+                try await CVClient.shared.trainYolo()
+                yoloStatus = "training"
+                await pollYoloStatus()
+            } catch {
+                yoloStatus = "not_trained"
+            }
+        }
+    }
+
+    /// Poll until the server reports non-training, or until 72 iterations (~6 min) elapsed.
+    private func pollYoloStatus() async {
+        let maxPolls = 72
+        var polls = 0
+        while yoloStatus == "training" && polls < maxPolls {
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                polls += 1
+                let info = try await CVClient.shared.yoloModelStatus()
+                await MainActor.run {
+                    self.yoloStatus = info.status
+                    self.yoloTrainedAt = info.trained_at
+                }
+            } catch {
+                break
+            }
+        }
+        // If we timed out still training, mark as error.
+        if yoloStatus == "training" {
+            yoloStatus = "not_trained"
+        }
+    }
+
+    func refreshYoloStatus() {
+        Task {
+            guard let info = try? await CVClient.shared.yoloModelStatus() else { return }
+            await MainActor.run {
+                self.yoloStatus = info.status
+                self.yoloTrainedAt = info.trained_at
+            }
+        }
     }
 }
 

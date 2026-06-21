@@ -83,6 +83,23 @@ final class AppDatabase {
         NSImage(contentsOf: imagesDir.appendingPathComponent(fileName))
     }
 
+    // MARK: - Arbitrary sidecar files (e.g. the series JSON)
+
+    func writeFile(_ data: Data, name: String) throws {
+        try data.write(to: imagesDir.appendingPathComponent(name))
+    }
+
+    func readFile(_ name: String) -> Data? {
+        try? Data(contentsOf: imagesDir.appendingPathComponent(name))
+    }
+
+    /// Number of plates in a saved time course (1 if it's a single plate).
+    func seriesCount(_ id: String) -> Int {
+        guard let d = readFile("\(id)_series.json"),
+              let doc = try? JSONDecoder().decode(SeriesDoc.self, from: d) else { return 1 }
+        return max(1, doc.count)
+    }
+
     // MARK: - Queries
 
     func save(_ experiment: ExperimentRecord, spots: [SpotRecord]) throws {

@@ -6,7 +6,14 @@ struct Spot: Identifiable, Hashable {
     let id = UUID()
     var point: CGPoint
     var label: SpotLabel
+    /// Free-text label; when non-empty it overrides the preset `label` for display.
+    var customLabel: String = ""
     var note: String = ""
+
+    /// Text shown on the marker / in the Rf table.
+    var displayName: String { customLabel.isEmpty ? label.rawValue : customLabel }
+    /// Marker color (custom labels reuse the neutral "standard" color).
+    var displayColor: Color { customLabel.isEmpty ? label.color : Palette.standard }
 }
 
 /// Rf calibration + spots for a single plate (spec §7).

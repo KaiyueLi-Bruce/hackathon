@@ -24,6 +24,7 @@ from . import lines as L
 from . import binarize as B
 from . import spots as S
 from . import enhance as E
+from . import learn as LN
 
 
 @dataclass
@@ -43,6 +44,7 @@ class PipelineResult:
     spots: List[Dict[str, Any]]
     warnings: List[str]
     engine_used: str = "opencv"   # opencv | ai+opencv | yolo
+    learned: bool = False         # 本次检测是否用了 sklearn 学习模型
 
     def to_json(self) -> Dict[str, Any]:
         return asdict(self)
@@ -50,7 +52,7 @@ class PipelineResult:
 
 def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
                  debug: bool = False, llm_regions=None, engine_used: str = "opencv",
-                 rect=None):
+                 rect=None, use_yolo: bool = False):
     """返回 (PipelineResult, debug_image|None, rectified_image)。
 
     rectified_image 即坐标基准图 (正畸后); app 导入后应显示它, 而非用户原图。
@@ -71,8 +73,9 @@ def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
     # ② 光照归一化
     gray = P.to_gray_clahe(img, cfg)
 
-    # ④ 基线 / 溶剂前沿 (先于③, 为③提供 ROI)
-    ln = L.detect_lines(gray, cfg)
+    # ④ 基线 / 溶剂前沿 (先于③, 为③提供 ROI); 若已学线模型则用它
+    line_clf = LN.SpotClassifier.load(LN.LINE_CLF_PATH)
+    ln = L.detect_lines(gray, cfg, line_clf=line_clf)
     if ln.baseline_y is None:
         warnings.append("未检到基线铅笔线, 待用户事后拖动给定")
     if ln.front_y is None:
@@ -83,10 +86,27 @@ def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
     if bin_res.uncertain:
         warnings.append("极性不确定 (明暗斑响应接近), 建议用户确认显色方式")
 
-    # ⑤ 斑点候选 (形状无关) + ⑥ 泳道; 有 AI 粗框则用其精修
+    # ⑤ 斑点候选 (形状无关) + ⑥ 泳道。优先级: 学习模型 > AI 粗框 > 面积拐点。
+    clf = LN.SpotClassifier.load(LN.CLF_PATH)
+    scorer = None
+    learned = False
+    if clf.is_trained:
+        def scorer(s):  # noqa: E306 - 闭包打分器 (img=正畸BGR, 与候选同坐标系)
+            f = LN.patch_features(img, s.x, s.y, cfg)
+            return float(clf.proba(f[None, :])[0])
+        learned = True
+        engine_used = f"{engine_used}+skl"
     sp = S.detect_spots(bin_res.binary, bin_res.gray, bin_res.polarity, bin_res.roi,
                         ln.baseline_y, ln.front_y, float(h * w), cfg,
-                        keep_regions=llm_regions)
+                        keep_regions=(None if learned else llm_regions), scorer=scorer)
+
+    # YOLO fallback: third layer — only when sklearn found nothing
+    if use_yolo and not sp.spots:
+        from . import yolo as Y
+        yolo_sp = Y.detect_yolo(img, cfg, ln.baseline_y, ln.front_y)
+        if yolo_sp.spots:
+            sp = yolo_sp
+            engine_used = f"{engine_used}+yolo"
 
     spots_json = [{
         "x": round(s.x / w, 5), "y": round(s.y / h, 5),
@@ -105,7 +125,7 @@ def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
         front_y_norm=(round(ln.front_y / h, 5) if ln.front_y is not None else None),
         baseline_from=ln.baseline_from, front_from=ln.front_from,
         n_lanes=len(sp.lane_bounds), spots=spots_json, warnings=warnings,
-        engine_used=engine_used,
+        engine_used=engine_used, learned=learned,
     )
 
     # 显示用图: 在几何正畸图上叠加扫描件增强 (检测已在未增强图上完成, 坐标不变)

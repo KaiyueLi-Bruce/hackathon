@@ -136,7 +136,7 @@ def _is_line(w: int, h: int, plate_w: int, plate_h: int, cfg: Config) -> bool:
 
 def detect_spots(binary: np.ndarray, gray: np.ndarray, polarity: str, roi,
                  baseline_y, front_y, plate_area: float, cfg: Config,
-                 keep_regions=None) -> SpotsResult:
+                 keep_regions=None, scorer=None) -> SpotsResult:
     x0, y0, x1, y1 = roi
     plate_h, plate_w = binary.shape[:2]
     n, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
@@ -177,11 +177,14 @@ def detect_spots(binary: np.ndarray, gray: np.ndarray, polarity: str, roi,
                           int(area), -1, _rf(cy, baseline_y, front_y), shape))
 
     # ⑤b 噪点过滤: 有 LLM 粗框则用 AI 区域精修; 否则面积回归拐点压噪
-    if keep_regions is not None:
+    if scorer is not None:
+        # 已训练分类器: 打分过滤. 兜底: 若分类器过于保守导致 0 结果, 回退面积拐点.
+        scored = [s for s in spots if scorer(s) >= cfg.spot_clf_thresh]
+        spots = scored if scored else _area_knee_cut(spots, cfg)
+    elif keep_regions is not None:
         filtered = _filter_by_regions(spots, keep_regions, plate_w, plate_h, cfg)
         # 兜底(Plan C): AI 粗框为空/坐标不可靠时与候选零重叠 -> 会清空所有候选。
         # 弱模型不该删掉好结果, 只该补短板: 此时回退纯 OpenCV 面积拐点压噪, 而非返回空。
-        # (与 _rectify 的 "OpenCV 优先, AI 仅补短板" 同思路)
         spots = filtered if filtered else _area_knee_cut(spots, cfg)
     else:
         spots = _area_knee_cut(spots, cfg)
