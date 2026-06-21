@@ -1,4 +1,4 @@
-# ChromaLog (macOS)
+# Auto Chem (macOS)
 
 TLC plate analysis app — SwiftUI, canvas-first. Built per `../ChromaLog-Spec.md`.
 

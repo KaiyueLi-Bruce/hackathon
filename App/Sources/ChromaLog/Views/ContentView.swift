@@ -20,7 +20,7 @@ struct ContentView: View {
             if store.showInspector {
                 Divider()
                 InspectorView()
-                    .frame(width: 208)
+                    .frame(width: 280)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
