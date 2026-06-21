@@ -21,3 +21,33 @@ def test_patch_features_centroid_near_edge_does_not_crash():
     f = learn.patch_features(img, 1, 1, cfg)   # gray input, corner centroid
     assert f.shape == (cfg.clf_patch_size ** 2 + 3,)
     assert np.all(np.isfinite(f))
+
+
+def test_classifier_learns_separable_data(tmp_path):
+    rng = np.random.RandomState(0)
+    pos = rng.normal(0.8, 0.05, size=(20, 5)).astype(np.float32)
+    neg = rng.normal(0.2, 0.05, size=(20, 5)).astype(np.float32)
+    X = np.vstack([pos, neg]); y = np.array([1] * 20 + [0] * 20)
+    clf = learn.SpotClassifier()
+    assert clf.is_trained is False
+    clf.update(X, y)
+    assert clf.is_trained is True
+    assert clf.n_samples == 40
+    p = clf.proba(np.array([[0.8, 0.8, 0.8, 0.8, 0.8],
+                            [0.2, 0.2, 0.2, 0.2, 0.2]], np.float32))
+    assert p[0] > 0.5 > p[1]
+
+
+def test_classifier_save_load_roundtrip(tmp_path):
+    path = tmp_path / "clf.pkl"
+    X = np.random.RandomState(1).rand(10, 5).astype(np.float32)
+    y = np.array([1, 0] * 5)
+    clf = learn.SpotClassifier(); clf.update(X, y); clf.save(path)
+    loaded = learn.SpotClassifier.load(path)
+    assert loaded.is_trained and loaded.n_samples == 10
+    assert np.allclose(loaded.proba(X), clf.proba(X))
+
+
+def test_classifier_load_missing_returns_untrained(tmp_path):
+    clf = learn.SpotClassifier.load(tmp_path / "nope.pkl")
+    assert clf.is_trained is False and clf.n_samples == 0
