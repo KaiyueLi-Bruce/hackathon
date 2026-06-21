@@ -78,6 +78,10 @@ final class AppStore: ObservableObject {
     @Published var saveStatus: String?
     @Published var isAutoDetecting: Bool = false
     @Published var detectWarnings: [String] = []
+    /// Snapshot of auto-detected spot centroids (before user edits) — training negatives source.
+    @Published var autoCandidates: [CGPoint] = []
+    /// Number of correction samples the engine has learned from (for the inspector status line).
+    @Published var modelTrainedCount: Int = 0
 
     /// Set to true when the user manually drags a reference line after import.
     /// Prevents subsequent auto-detect runs from overwriting the user's calibration.
@@ -262,6 +266,14 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func refreshModelInfo() {
+        Task { @MainActor in
+            if let info = await CVClient.shared.modelInfo() {
+                self.modelTrainedCount = info.n_samples
+            }
+        }
+    }
+
     // MARK: - Auto-detect (M5)
 
     func runAutoDetect() {
@@ -330,6 +342,7 @@ final class AppStore: ObservableObject {
         }
 
         lastEngineUsed = result.engine_used
+        autoCandidates = result.spots.map { CGPoint(x: $0.x, y: $0.y) }
         detectWarnings = result.warnings
         if !result.warnings.isEmpty {
             saveStatus = "Detection completed with \(result.warnings.count) warning(s)"
@@ -418,6 +431,18 @@ final class AppStore: ObservableObject {
             try db.save(record, spots: spotRecords)
             currentExperimentID = id
             saveStatus = "Saved \(record.title)"
+            // Online learning from this correction (best-effort; never blocks saving).
+            if let rectified = plateImage, let rectData = rectified.jpegData() {
+                let finals = spots.map { $0.point }
+                let cands = autoCandidates
+                Task.detached {
+                    await CVClient.shared.learn(rectified: rectData,
+                                                finalSpots: finals, autoCandidates: cands)
+                    if let info = await CVClient.shared.modelInfo() {
+                        await MainActor.run { self.modelTrainedCount = info.n_samples }
+                    }
+                }
+            }
             refreshExperiments()
         } catch {
             saveStatus = "Save failed: \(error.localizedDescription)"
