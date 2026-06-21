@@ -73,8 +73,9 @@ def run_pipeline(bgr: np.ndarray, cfg: Optional[Config] = None,
     # ② 光照归一化
     gray = P.to_gray_clahe(img, cfg)
 
-    # ④ 基线 / 溶剂前沿 (先于③, 为③提供 ROI)
-    ln = L.detect_lines(gray, cfg)
+    # ④ 基线 / 溶剂前沿 (先于③, 为③提供 ROI); 若已学线模型则用它
+    line_clf = LN.SpotClassifier.load(LN.LINE_CLF_PATH)
+    ln = L.detect_lines(gray, cfg, line_clf=line_clf)
     if ln.baseline_y is None:
         warnings.append("未检到基线铅笔线, 待用户事后拖动给定")
     if ln.front_y is None:

@@ -22,6 +22,8 @@ from .config import Config
 MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
 CLF_PATH = MODEL_DIR / "spot_clf.pkl"
 SAMPLES_PATH = MODEL_DIR / "spot_samples.npz"
+LINE_CLF_PATH = MODEL_DIR / "line_clf.pkl"      # 基线/前沿 行分类器 (与 SpotClassifier 同构)
+LINE_SAMPLES_PATH = MODEL_DIR / "line_samples.npz"
 
 
 def _to_gray(img: np.ndarray) -> np.ndarray:
@@ -49,6 +51,50 @@ def patch_features(img: np.ndarray, cx: float, cy: float, cfg: Config) -> np.nda
     stats = np.array([patch.mean(), patch.std(), float(np.sqrt(gx * gx + gy * gy).mean())],
                      dtype=np.float32)
     return np.concatenate([patch.ravel(), stats]).astype(np.float32)
+
+
+def row_features(img: np.ndarray, y_norm: float, cfg: Config) -> np.ndarray:
+    """某一归一化行 y 的'是不是基线/前沿线'特征 (定长 6 维)。
+    基线/前沿是细、暗、横贯板宽的线 -> 用 暗度/上下对比/横向均匀度/暗列占比/垂直边缘/位置。"""
+    gray = _to_gray(img).astype(np.float32)
+    h, w = gray.shape[:2]
+    yc = int(round(y_norm * h))
+    half = max(1, int(0.006 * h))
+    def band(a, b):
+        a = max(0, a); b = min(h, b)
+        if b <= a:
+            return np.full(w, 255.0, np.float32)
+        return gray[a:b].mean(axis=0)
+    center = band(yc - half, yc + half + 1)               # 该行(逐列均值)
+    above = band(yc - 4 * half, yc - half)
+    below = band(yc + half + 1, yc + 4 * half + 1)
+    cm = float(center.mean())
+    darkness = (255.0 - cm) / 255.0
+    surround = ((above.mean() + below.mean()) / 2.0 - cm) / 255.0     # 比上下暗多少
+    uniform = 1.0 - min(1.0, float(center.std()) / (cm + 1.0))        # 横向越均匀越像线
+    thr = float(np.median(gray)) - 12.0
+    dark_frac = float((center < thr).mean())                         # 暗列占比(横贯)
+    vedge = abs(above.mean() - below.mean()) / 255.0
+    return np.array([darkness, surround, uniform, dark_frac, vedge, float(y_norm)], np.float32)
+
+
+def derive_line_samples(img, baseline_y, front_y, cfg: Config, rng_seed: int = 1):
+    """从基线/前沿矫正派生 (X,y,counts): 两条线=正, 远离的随机行=负。"""
+    feats, labels = [], []
+    pos_ys = [v for v in (baseline_y, front_y) if v is not None]
+    for v in pos_ys:
+        feats.append(row_features(img, float(v), cfg)); labels.append(1)
+    rng = np.random.RandomState(rng_seed)
+    n_neg = max(4, 3 * len(pos_ys))
+    added, tries = 0, 0
+    while added < n_neg and tries < n_neg * 40 + 40:
+        tries += 1
+        ry = float(rng.uniform(0.05, 0.95))
+        if all(abs(ry - v) > 0.06 for v in pos_ys):
+            feats.append(row_features(img, ry, cfg)); labels.append(0); added += 1
+    X = np.array(feats, np.float32) if feats else np.zeros((0, 6), np.float32)
+    y = np.array(labels, int)
+    return X, y, {"pos": int((y == 1).sum()), "neg": int((y == 0).sum())}
 
 
 class SpotClassifier:
@@ -159,21 +205,44 @@ def append_samples(X, y, path: Path = SAMPLES_PATH) -> int:
     return int(X.shape[0])
 
 
+def score_rows(img, y_norms, cfg: Config, clf: "SpotClassifier") -> np.ndarray:
+    """对一批候选行打 P(是线) 分。clf 未训练时返回全 0.5。"""
+    if not y_norms:
+        return np.zeros(0, np.float32)
+    X = np.array([row_features(img, float(v), cfg) for v in y_norms], np.float32)
+    return clf.proba(X)
+
+
 def model_info(clf_path: Path = CLF_PATH, samples_path: Path = SAMPLES_PATH) -> dict:
-    clf_path, samples_path = Path(clf_path), Path(samples_path)
-    if not clf_path.exists():
-        return {"trained": False, "n_samples": 0, "updated_at": None}
-    n = 0
-    if samples_path.exists():
-        n = int(np.load(samples_path)["y"].shape[0])
-    ts = datetime.fromtimestamp(os.path.getmtime(clf_path), timezone.utc).isoformat()
-    return {"trained": True, "n_samples": n, "updated_at": ts}
+    def _count(p):
+        p = Path(p)
+        return int(np.load(p)["y"].shape[0]) if p.exists() else 0
+    info = {"trained": Path(clf_path).exists(), "n_samples": _count(samples_path),
+            "updated_at": None,
+            "lines_trained": LINE_CLF_PATH.exists(), "line_samples": _count(LINE_SAMPLES_PATH)}
+    if Path(clf_path).exists():
+        info["updated_at"] = datetime.fromtimestamp(os.path.getmtime(clf_path), timezone.utc).isoformat()
+    return info
 
 
-def apply_correction(img, final_pts, auto_pts, cfg: Config) -> dict:
+def apply_correction(img, final_pts, auto_pts, cfg: Config,
+                     baseline_y=None, front_y=None) -> dict:
+    # 斑点分类器
     X, y, counts = derive_samples(img, final_pts, auto_pts, cfg)
     clf = SpotClassifier.load(CLF_PATH)
     clf.update(X, y)
     clf.save(CLF_PATH)
     total = append_samples(X, y, SAMPLES_PATH)
-    return {"ok": True, "batch": counts, "trained_total": total}
+    out = {"ok": True, "batch": counts, "trained_total": total}
+
+    # 线分类器 (基线/前沿)
+    if baseline_y is not None or front_y is not None:
+        lX, ly, lcounts = derive_line_samples(img, baseline_y, front_y, cfg)
+        if lX.shape[0]:
+            lclf = SpotClassifier.load(LINE_CLF_PATH)
+            lclf.update(lX, ly)
+            lclf.save(LINE_CLF_PATH)
+            ltotal = append_samples(lX, ly, LINE_SAMPLES_PATH)
+            out["line_batch"] = lcounts
+            out["line_trained_total"] = ltotal
+    return out

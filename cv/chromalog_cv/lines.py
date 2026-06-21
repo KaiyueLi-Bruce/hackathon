@@ -75,8 +75,33 @@ def _wet_front_estimate(gray: np.ndarray, baseline_y: Optional[float]) -> Option
     return float(idx)
 
 
-def detect_lines(gray: np.ndarray, cfg: Config) -> LinesResult:
+def _detect_lines_learned(gray, cfg, line_clf):
+    """已学线模型: 在候选行(Hough + 网格扫描)里按 P(是线) 选下半=基线、上半=前沿。"""
+    from . import learn as LN
+    h = gray.shape[0]
+    hough = _merge_ys(_hough_horizontal(gray, cfg), h, cfg)
+    grid = [i / 100.0 for i in range(5, 96, 2)]
+    cand = sorted(set([round(v / h, 3) for v in hough] + grid))
+    scores = LN.score_rows(gray, cand, cfg, line_clf)
+    lower = [(c, s) for c, s in zip(cand, scores) if c > 0.5]
+    upper = [(c, s) for c, s in zip(cand, scores) if c <= 0.5]
+    thr = 0.5
+    baseline = max(lower, key=lambda t: t[1]) if lower else None
+    front = max(upper, key=lambda t: t[1]) if upper else None
+    by = baseline[0] * h if baseline and baseline[1] >= thr else None
+    fy = front[0] * h if front and front[1] >= thr else None
+    return LinesResult(by, fy, [v for v in (by, fy) if v is not None],
+                       "learned" if by is not None else "none",
+                       "learned" if fy is not None else "none")
+
+
+def detect_lines(gray: np.ndarray, cfg: Config, line_clf=None) -> LinesResult:
     h, _ = gray.shape[:2]
+    # 已学线模型优先 (把'线的识别'纳入学习)
+    if line_clf is not None and getattr(line_clf, "is_trained", False):
+        res = _detect_lines_learned(gray, cfg, line_clf)
+        if res.baseline_y is not None or res.front_y is not None:
+            return res
     ys = _merge_ys(_hough_horizontal(gray, cfg), h, cfg)
 
     if len(ys) >= 2:
